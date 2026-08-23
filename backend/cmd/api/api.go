@@ -60,9 +60,6 @@ func (app *application) run(h http.Handler) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// ListenAndServe blocks, so it runs in its own goroutine and reports a
-	// startup/serving failure back through errCh. ErrServerClosed is the
-	// expected result of Shutdown, not a failure.
 	errCh := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
