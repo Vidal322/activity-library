@@ -1,0 +1,10 @@
+.git
+.gitignore
+Dockerfile
+.dockerignore
+*.md
+
+# local build output
+api
+bin/
+tmp/
