@@ -1,1 +1,10 @@
+# documentation
 docs/
+# build output
+/backend/api
+/backend/bin/
+
+# env
+.env
+.env.*
+!.env.example
