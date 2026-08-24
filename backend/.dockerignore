@@ -8,3 +8,8 @@ Dockerfile
 api
 bin/
 tmp/
+
+# secrets
+.env
+.env.*
+!.env.example

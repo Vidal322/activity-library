@@ -1,15 +1,25 @@
 package main
 
 import (
+	"errors"
 	"log/slog"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
 var version = "dev"
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
 	slog.SetDefault(logger)
+
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Error("Could not read .env", "error", err)
+		os.Exit(1)
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		slog.Error("Could not load config", "error", err)

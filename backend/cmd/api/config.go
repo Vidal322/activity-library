@@ -15,6 +15,8 @@ type dbConfig struct {
 	DSN string `env:"DSN,required"`
 }
 
+// loadConfig reads the process environment only. Populating that environment
+// from a .env file is a development concern handled once, at startup, in main.
 func loadConfig() (config, error) {
 	var cfg config
 	err := env.Parse(&cfg)
