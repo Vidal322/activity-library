@@ -14,21 +14,18 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-const shutdownTimeout = 15 * time.Second
+const (
+	readTimeout     = 10 * time.Second
+	handlerTimeout  = 30 * time.Second
+	writeTimeout    = handlerTimeout + 5*time.Second
+	idleTimeout     = time.Minute
+	shutdownTimeout = 15 * time.Second
+)
 
 type application struct {
 	config config
 	// logger
 	// db driver
-}
-
-type config struct {
-	addr string
-	db   dbConfig
-}
-
-type dbConfig struct {
-	dsn string
 }
 
 func (app *application) mount() http.Handler {
@@ -39,7 +36,7 @@ func (app *application) mount() http.Handler {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(middleware.Timeout(handlerTimeout))
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("all good"))
@@ -50,11 +47,11 @@ func (app *application) mount() http.Handler {
 
 func (app *application) run(h http.Handler) error {
 	srv := &http.Server{
-		Addr:         app.config.addr,
+		Addr:         app.config.Addr,
 		Handler:      h,
-		WriteTimeout: time.Second * 30,
-		ReadTimeout:  time.Second * 10,
-		IdleTimeout:  time.Minute,
+		WriteTimeout: writeTimeout,
+		ReadTimeout:  readTimeout,
+		IdleTimeout:  idleTimeout,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -67,7 +64,7 @@ func (app *application) run(h http.Handler) error {
 		}
 	}()
 
-	slog.Info("Server has started at addr", "address", app.config.addr)
+	slog.Info("Server has started at addr", "address", app.config.Addr)
 
 	select {
 	case err := <-errCh:
