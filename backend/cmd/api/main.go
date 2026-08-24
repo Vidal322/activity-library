@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+var version = "dev"
+
 func main() {
 	cfg := config{
 		addr: ":8080",
@@ -16,6 +18,8 @@ func main() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
+
+	slog.Info("Starting activity-library api", "version", version)
 
 	err := api.run(api.mount())
 	if err != nil {
