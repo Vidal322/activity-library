@@ -12,6 +12,9 @@ VERSION     := $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 
 GO          ?= go
+# Compose reads .env from its own directory by default; the project keeps a
+# single env file under backend/, so point it there explicitly.
+COMPOSE     ?= docker compose --env-file $(BACKEND)/.env
 
 .DEFAULT_GOAL := help
 
@@ -58,6 +61,33 @@ tidy: ## Tidy and verify modules
 
 .PHONY: check
 check: fmt vet test ## Everything CI should run
+
+# ---- database ----
+.PHONY: db-up
+db-up: pgadmin-servers ## Start Postgres and pgAdmin, waiting until Postgres accepts connections
+	$(COMPOSE) up -d --wait
+
+.PHONY: db-down
+db-down: ## Stop the database services (data is preserved)
+	$(COMPOSE) down
+
+.PHONY: db-reset
+db-reset: ## Stop the database services and DELETE all data
+	$(COMPOSE) down --volumes
+
+.PHONY: pgadmin-servers
+pgadmin-servers: ## Render docker/pgadmin/servers.json from DB_DSN
+	@python3 scripts/pgadmin-servers.py
+
+.PHONY: pgadmin-reset
+pgadmin-reset: ## Wipe pgAdmin's state so servers.json is re-imported
+	$(COMPOSE) rm -sf pgadmin
+	docker volume rm -f activity_library_pgadmin-data
+	$(COMPOSE) up -d --wait pgadmin
+
+.PHONY: db-logs
+db-logs: ## Follow the database service logs
+	$(COMPOSE) logs -f
 
 # ---- docker ----
 .PHONY: docker-build

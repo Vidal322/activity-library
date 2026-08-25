@@ -4,6 +4,9 @@ docs/
 /backend/api
 /backend/bin/
 
+# generated from backend/.env by scripts/pgadmin-servers.py
+/docker/pgadmin/servers.json
+
 # env
 .env
 .env.*
