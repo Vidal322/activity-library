@@ -15,7 +15,7 @@ const testDSN = "postgres://user:hunter2@localhost:5432/activity_library?sslmode
 // envKeys lists every variable loadConfig reads, plus the unprefixed DSN that
 // it must ignore. setEnv clears all of them so a test never inherits a value
 // from the developer's shell or from a sibling test.
-var envKeys = []string{"ADDR", "DB_DSN", "DSN"}
+var envKeys = []string{"ADDR", "DB_DSN", "DB_MAX_CONNS", "DB_MIN_CONNS", "DSN"}
 
 // setEnv installs exactly the given variables and removes the rest.
 //
@@ -49,12 +49,19 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.DB.DSN != testDSN {
 		t.Errorf("DB.DSN = %q, want %q", cfg.DB.DSN, testDSN)
 	}
+	if cfg.DB.MaxConns != 25 {
+		t.Errorf("DB.MaxConns = %d, want 25", cfg.DB.MaxConns)
+	}
+	if cfg.DB.MinConns != 5 {
+		t.Errorf("DB.MinConns = %d, want 5", cfg.DB.MinConns)
+	}
 }
 
 func TestLoadConfigOverrides(t *testing.T) {
 	setEnv(t, map[string]string{
-		"ADDR":   ":9999",
-		"DB_DSN": testDSN,
+		"ADDR":         ":9999",
+		"DB_DSN":       testDSN,
+		"DB_MAX_CONNS": "40",
 	})
 
 	cfg, err := loadConfig()
@@ -64,6 +71,9 @@ func TestLoadConfigOverrides(t *testing.T) {
 
 	if cfg.Addr != ":9999" {
 		t.Errorf("Addr = %q, want %q — the environment must win over envDefault", cfg.Addr, ":9999")
+	}
+	if cfg.DB.MaxConns != 40 {
+		t.Errorf("DB.MaxConns = %d, want 40 — the environment must win over envDefault", cfg.DB.MaxConns)
 	}
 }
 
@@ -108,6 +118,24 @@ func TestDBConfigLogValueDoesNotLeakDSN(t *testing.T) {
 	}
 	if !strings.Contains(output, "[redacted]") {
 		t.Errorf("log output = %s, want it to contain [redacted]", output)
+	}
+}
+
+// TestDBConfigLogValueReportsPoolSizes guards the reason LogValue is a group
+// rather than a bare string: redacting the whole struct also hid the pool
+// sizes, which are not secret and are what a connection-exhaustion
+// investigation starts from.
+func TestDBConfigLogValueReportsPoolSizes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	logger.Info("config loaded", "db", dbConfig{DSN: testDSN, MaxConns: 25, MinConns: 5})
+
+	output := buf.String()
+	for _, want := range []string{"db.max_conns=25", "db.min_conns=5"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("log output = %s, want it to contain %s", output, want)
+		}
 	}
 }
 

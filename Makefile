@@ -100,8 +100,13 @@ docker-run: docker-build ## Run the API image (PORT=8080 to override)
 
 # ---- misc ----
 .PHONY: health
-health: ## Hit the health endpoint
+health: ## Hit the health endpoint (liveness; does not touch the database)
 	curl -fsS http://localhost:$(PORT)/health && echo
+
+.PHONY: ready
+ready: ## Hit the readiness endpoint (pings the database)
+	@# --fail-with-body: exit non-zero on 503 while still printing the reason.
+	curl -sS --fail-with-body http://localhost:$(PORT)/readyz && echo
 
 .PHONY: help
 help: ## Show this help

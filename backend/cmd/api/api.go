@@ -12,20 +12,22 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
-	readTimeout     = 10 * time.Second
-	handlerTimeout  = 30 * time.Second
-	writeTimeout    = handlerTimeout + 5*time.Second
-	idleTimeout     = time.Minute
-	shutdownTimeout = 15 * time.Second
+	readTimeout      = 10 * time.Second
+	handlerTimeout   = 30 * time.Second
+	writeTimeout     = handlerTimeout + 5*time.Second
+	idleTimeout      = time.Minute
+	shutdownTimeout  = 15 * time.Second
+	readinessTimeout = 2 * time.Second
 )
 
 type application struct {
 	config config
 	// logger
-	// db driver
+	pool *pgxpool.Pool
 }
 
 func (app *application) mount() http.Handler {
@@ -38,8 +40,25 @@ func (app *application) mount() http.Handler {
 
 	r.Use(middleware.Timeout(handlerTimeout))
 
+	// Liveness: is the process up? Deliberately dependency-free, so a database
+	// blip cannot get the container restarted.
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("all good"))
+	})
+
+	// Readiness: can the process actually serve traffic? This is the one that
+	// checks the database.
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
+		defer cancel()
+
+		if err := app.pool.Ping(ctx); err != nil {
+			slog.Error("Readiness check failed", "error", err)
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		w.Write([]byte("ready"))
 	})
 
 	return r

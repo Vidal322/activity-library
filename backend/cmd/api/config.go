@@ -12,7 +12,9 @@ type config struct {
 }
 
 type dbConfig struct {
-	DSN string `env:"DSN,required"`
+	DSN      string `env:"DSN,required"`
+	MaxConns int32  `env:"MAX_CONNS"    envDefault:"25"`
+	MinConns int32  `env:"MIN_CONNS"    envDefault:"5"`
 }
 
 // loadConfig reads the process environment only. Populating that environment
@@ -23,11 +25,15 @@ func loadConfig() (config, error) {
 	return cfg, err
 }
 
-// Prevent database config from leaking in logs
-// Redacts entire dsn in logs
 func (c dbConfig) LogValue() slog.Value {
+	dsn := "[redacted]"
 	if c.DSN == "" {
-		return slog.StringValue("unset")
+		dsn = "unset"
 	}
-	return slog.StringValue("[redacted]")
+
+	return slog.GroupValue(
+		slog.String("dsn", dsn),
+		slog.Int64("max_conns", int64(c.MaxConns)),
+		slog.Int64("min_conns", int64(c.MinConns)),
+	)
 }

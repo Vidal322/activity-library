@@ -43,14 +43,3 @@ volumes:
   db-data:
   pgadmin-data:
 
-#
-#   api:
-#     build:
-#       context: backend
-#     environment:
-#       DB_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PW}@postgres:5432/${POSTGRES_DB}?sslmode=disable
-#     ports:
-#       - "8080:8080"
-#     depends_on:
-#       postgres:
-#         condition: service_healthy
