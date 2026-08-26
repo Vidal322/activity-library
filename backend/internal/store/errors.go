@@ -28,6 +28,13 @@ func (e *ConstraintError) Unwrap() error {
 	return e.Sentinel
 }
 
+func constraintErr(name string, sentinel error) error {
+	if name == "" {
+		return sentinel
+	}
+	return &ConstraintError{Constraint: name, Sentinel: sentinel}
+}
+
 func classify(err error) error {
 	if err == nil {
 		return nil
@@ -39,17 +46,25 @@ func classify(err error) error {
 
 	var pgErr *pgconn.PgError
 
-	if !errors.As(err, pgErr) {
+	if !errors.As(err, &pgErr) {
 		return err
 	}
 
 	switch pgErr.Code {
 	case pgerrcode.UniqueViolation:
-		return &ConstraintError{pgErr.ConstraintName, ErrConflict}
+		return constraintErr(pgErr.ConstraintName, ErrConflict)
 	case pgerrcode.ForeignKeyViolation, pgerrcode.CheckViolation,
 		pgerrcode.NotNullViolation, pgerrcode.ExclusionViolation:
-		return &ConstraintError{pgErr.ConstraintName, ErrInvalid}
+		return constraintErr(pgErr.ConstraintName, ErrInvalid)
 	default:
 		return err
 	}
+}
+
+func classifyDelete(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
+		return constraintErr(pgErr.ConstraintName, ErrInUse)
+	}
+	return classify(err)
 }
