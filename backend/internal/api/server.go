@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"context"
@@ -10,8 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Vidal322/activity-library/internal/config"
@@ -26,45 +24,23 @@ const (
 	readinessTimeout = 2 * time.Second
 )
 
-type application struct {
+// Server carries the dependencies every handler shares. Handler methods hang
+// off it, so adding a dependency widens this struct rather than every route.
+type Server struct {
 	config config.Config
-	// logger
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
 }
 
-func (app *application) mount() http.Handler {
-	r := chi.NewRouter()
-
-	r.Use(middleware.RequestID)
-	r.Use(middleware.ClientIPFromRemoteAddr)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-
-	r.Use(middleware.Timeout(handlerTimeout))
-
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("all good"))
-	})
-
-	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
-		defer cancel()
-
-		if err := app.pool.Ping(ctx); err != nil {
-			slog.Error("Readiness check failed", "error", err)
-			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
-			return
-		}
-
-		w.Write([]byte("ready"))
-	})
-
-	return r
+func NewServer(cfg config.Config, pool *pgxpool.Pool) *Server {
+	return &Server{
+		config: cfg,
+		pool:   pool,
+	}
 }
 
-func (app *application) run(h http.Handler) error {
+func (s *Server) serve(h http.Handler) error {
 	srv := &http.Server{
-		Addr:         app.config.Addr,
+		Addr:         s.config.Addr,
 		Handler:      h,
 		WriteTimeout: writeTimeout,
 		ReadTimeout:  readTimeout,
@@ -81,7 +57,7 @@ func (app *application) run(h http.Handler) error {
 		}
 	}()
 
-	slog.Info("Server has started at addr", "address", app.config.Addr)
+	slog.Info("Server has started at addr", "address", s.config.Addr)
 
 	select {
 	case err := <-errCh:
