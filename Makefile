@@ -94,6 +94,12 @@ pgadmin-reset: ## Wipe pgAdmin's state so servers.json is re-imported
 	docker volume rm -f activity_library_pgadmin-data
 	$(COMPOSE) up -d --wait pgadmin
 
+.PHONY: seed
+seed: db-up ## Insert the development dataset (idempotent; local databases only)
+	@# Runs migrations itself, so this works against a freshly reset database
+	@# without starting the API first.
+	$(GO) run -C $(BACKEND) ./cmd/seed
+
 .PHONY: db-logs
 db-logs: ## Follow the database service logs
 	$(COMPOSE) logs -f

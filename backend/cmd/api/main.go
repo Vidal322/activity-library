@@ -10,6 +10,7 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"github.com/Vidal322/activity-library/internal/config"
 	"github.com/Vidal322/activity-library/internal/store"
 )
 
@@ -36,7 +37,7 @@ func run() error {
 		return fmt.Errorf("read .env: %w", err)
 	}
 
-	cfg, err := loadConfig()
+	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

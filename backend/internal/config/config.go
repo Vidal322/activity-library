@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"log/slog"
@@ -6,26 +6,26 @@ import (
 	"github.com/caarlos0/env/v11"
 )
 
-type config struct {
+type Config struct {
 	Addr string   `env:"ADDR" envDefault:":8080"`
-	DB   dbConfig `                              envPrefix:"DB_"`
+	DB   DBConfig `                              envPrefix:"DB_"`
 }
 
-type dbConfig struct {
+type DBConfig struct {
 	DSN      string `env:"DSN,required"`
 	MaxConns int32  `env:"MAX_CONNS"    envDefault:"25"`
 	MinConns int32  `env:"MIN_CONNS"    envDefault:"5"`
 }
 
-// loadConfig reads the process environment only. Populating that environment
-// from a .env file is a development concern handled once, at startup, in main.
-func loadConfig() (config, error) {
-	var cfg config
+// Load reads the process environment only. Populating that environment from a
+// .env file is a development concern handled once, at startup, in main.
+func Load() (Config, error) {
+	var cfg Config
 	err := env.Parse(&cfg)
 	return cfg, err
 }
 
-func (c dbConfig) LogValue() slog.Value {
+func (c DBConfig) LogValue() slog.Value {
 	dsn := "[redacted]"
 	if c.DSN == "" {
 		dsn = "unset"

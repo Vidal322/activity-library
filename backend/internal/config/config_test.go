@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 // its absence.
 const testDSN = "postgres://user:hunter2@localhost:5432/activity_library?sslmode=disable"
 
-// envKeys lists every variable loadConfig reads, plus the unprefixed DSN that
+// envKeys lists every variable Load reads, plus the unprefixed DSN that
 // it must ignore. setEnv clears all of them so a test never inherits a value
 // from the developer's shell or from a sibling test.
 var envKeys = []string{"ADDR", "DB_DSN", "DB_MAX_CONNS", "DB_MIN_CONNS", "DSN"}
@@ -38,9 +38,9 @@ func setEnv(t *testing.T, vars map[string]string) {
 func TestLoadConfigDefaults(t *testing.T) {
 	setEnv(t, map[string]string{"DB_DSN": testDSN})
 
-	cfg, err := loadConfig()
+	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("loadConfig() returned an unexpected error: %v", err)
+		t.Fatalf("Load() returned an unexpected error: %v", err)
 	}
 
 	if cfg.Addr != ":8080" {
@@ -64,9 +64,9 @@ func TestLoadConfigOverrides(t *testing.T) {
 		"DB_MAX_CONNS": "40",
 	})
 
-	cfg, err := loadConfig()
+	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("loadConfig() returned an unexpected error: %v", err)
+		t.Fatalf("Load() returned an unexpected error: %v", err)
 	}
 
 	if cfg.Addr != ":9999" {
@@ -82,9 +82,9 @@ func TestLoadConfigOverrides(t *testing.T) {
 func TestLoadConfigRequiresDSN(t *testing.T) {
 	setEnv(t, nil)
 
-	_, err := loadConfig()
+	_, err := Load()
 	if err == nil {
-		t.Fatal("loadConfig() succeeded with DB_DSN unset, want an error")
+		t.Fatal("Load() succeeded with DB_DSN unset, want an error")
 	}
 	if !strings.Contains(err.Error(), "DB_DSN") {
 		t.Errorf("error %q does not name DB_DSN, so it may be reporting a different problem", err)
@@ -97,9 +97,9 @@ func TestLoadConfigRequiresDSN(t *testing.T) {
 func TestLoadConfigIgnoresUnprefixedDSN(t *testing.T) {
 	setEnv(t, map[string]string{"DSN": testDSN})
 
-	cfg, err := loadConfig()
+	cfg, err := Load()
 	if err == nil {
-		t.Fatalf("loadConfig() read the DSN from DSN rather than DB_DSN, giving %q", cfg.DB.DSN)
+		t.Fatalf("Load() read the DSN from DSN rather than DB_DSN, giving %q", cfg.DB.DSN)
 	}
 }
 
@@ -107,7 +107,7 @@ func TestDBConfigLogValueDoesNotLeakDSN(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-	logger.Info("config loaded", "db", dbConfig{DSN: testDSN})
+	logger.Info("config loaded", "db", DBConfig{DSN: testDSN})
 
 	output := buf.String()
 	if strings.Contains(output, "hunter2") {
@@ -129,7 +129,7 @@ func TestDBConfigLogValueReportsPoolSizes(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-	logger.Info("config loaded", "db", dbConfig{DSN: testDSN, MaxConns: 25, MinConns: 5})
+	logger.Info("config loaded", "db", DBConfig{DSN: testDSN, MaxConns: 25, MinConns: 5})
 
 	output := buf.String()
 	for _, want := range []string{"db.max_conns=25", "db.min_conns=5"} {
@@ -143,7 +143,7 @@ func TestDBConfigLogValueReportsUnset(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-	logger.Info("config loaded", "db", dbConfig{})
+	logger.Info("config loaded", "db", DBConfig{})
 
 	if output := buf.String(); !strings.Contains(output, "unset") {
 		t.Errorf("log output = %s, want it to contain unset", output)

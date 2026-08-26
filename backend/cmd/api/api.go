@@ -13,6 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Vidal322/activity-library/internal/config"
 )
 
 const (
@@ -25,7 +27,7 @@ const (
 )
 
 type application struct {
-	config config
+	config config.Config
 	// logger
 	pool *pgxpool.Pool
 }
