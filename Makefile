@@ -24,6 +24,15 @@ GOOSE_VERSION = $(shell $(GO) list -C $(BACKEND) -m -f '{{.Version}}' github.com
 # Compose reads .env from its own directory by default; the project keeps a
 # single env file under backend/, so point it there explicitly.
 COMPOSE     ?= docker compose --env-file $(BACKEND)/.env
+# The network docker-run joins so the API container can resolve the "postgres"
+# service by name. Compose names it <project>_default, but the project name
+# depends on COMPOSE_PROJECT_NAME and on this directory's name, so it is read
+# back from the running container rather than reconstructed. ?= defines a
+# recursively expanded variable, so this only shells out if docker-run is the
+# goal, by which point its db-up prerequisite has started the container.
+DB_NETWORK  ?= $(shell docker inspect $$($(COMPOSE) ps -q postgres 2>/dev/null) \
+                   --format '{{range $$k, $$v := .NetworkSettings.Networks}}{{$$k}}{{"\n"}}{{end}}' \
+                   2>/dev/null | head -1)
 
 .DEFAULT_GOAL := help
 
@@ -134,8 +143,20 @@ docker-build: ## Build the API image
 	docker build -t $(IMAGE):$(TAG) $(BACKEND)
 
 .PHONY: docker-run
-docker-run: docker-build ## Run the API image (PORT=8080 to override)
-	docker run --rm -p $(PORT):8080 --name $(IMAGE) $(IMAGE):$(TAG)
+docker-run: docker-build db-up ## Run the API image against the Compose database (PORT=8080 to override)
+	@# .env is deliberately kept out of the image (see .dockerignore), so the
+	@# config is passed in at run time. DB_DSN names localhost, which is correct
+	@# from the host but points at the API container itself once inside one;
+	@# rewriting the host keeps the credentials in .env as the single source.
+	set -a && . ./$(BACKEND)/.env && set +a && \
+	net='$(DB_NETWORK)' && \
+	{ test -n "$$net" || { echo "make: could not read the Compose network from the postgres container; is it running? (make db-up)" >&2; exit 1; }; } && \
+	docker run --rm -p $(PORT):8080 --name $(IMAGE) \
+		--network "$$net" \
+		--env-file $(BACKEND)/.env \
+		-e ADDR=:8080 \
+		-e DB_DSN="$$(printf '%s' "$$DB_DSN" | sed 's#@localhost:#@postgres:#')" \
+		$(IMAGE):$(TAG)
 
 # ---- misc ----
 .PHONY: health

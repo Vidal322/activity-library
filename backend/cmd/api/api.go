@@ -42,14 +42,10 @@ func (app *application) mount() http.Handler {
 
 	r.Use(middleware.Timeout(handlerTimeout))
 
-	// Liveness: is the process up? Deliberately dependency-free, so a database
-	// blip cannot get the container restarted.
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("all good"))
 	})
 
-	// Readiness: can the process actually serve traffic? This is the one that
-	// checks the database.
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
 		defer cancel()
