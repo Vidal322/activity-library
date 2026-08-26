@@ -12,6 +12,15 @@ VERSION     := $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 
 GO          ?= go
+
+MIGRATIONS  := internal/store/migrations
+# The goose CLI compiles in one driver per database it supports. Exclude every
+# dialect but postgres: nothing else is needed, and each one drags in its own
+# driver dependency.
+GOOSE_TAGS  := no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb
+# Pinned to whatever version go.mod already uses for the goose library, so the
+# CLI that writes migrations cannot drift from the code that applies them.
+GOOSE_VERSION = $(shell $(GO) list -C $(BACKEND) -m -f '{{.Version}}' github.com/pressly/goose/v3)
 # Compose reads .env from its own directory by default; the project keeps a
 # single env file under backend/, so point it there explicitly.
 COMPOSE     ?= docker compose --env-file $(BACKEND)/.env
@@ -88,6 +97,30 @@ pgadmin-reset: ## Wipe pgAdmin's state so servers.json is re-imported
 .PHONY: db-logs
 db-logs: ## Follow the database service logs
 	$(COMPOSE) logs -f
+
+# ---- migrations ----
+# The API applies migrations itself at startup; these targets are for authoring
+# them and for inspecting or unwinding schema state by hand.
+.PHONY: goose
+goose: ## Build the goose CLI into backend/bin (postgres only)
+	@# Installed by version rather than built from ./backend: the pkg@version
+	@# form resolves in its own module context, so the CLI's driver
+	@# dependencies stay out of the API's go.mod and go.sum.
+	GOBIN=$(abspath $(BIN_DIR)) $(GO) install -tags '$(GOOSE_TAGS)' \
+		github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
+
+.PHONY: migration
+migration: goose ## Scaffold a migration (name=add_activities)
+	@test -n "$(name)" || { echo "usage: make migration name=add_activities"; exit 1; }
+	cd $(BACKEND) && ./bin/goose -s -dir $(MIGRATIONS) create $(name) sql
+
+.PHONY: migrate-status
+migrate-status: goose ## Show which migrations have been applied
+	cd $(BACKEND) && set -a && . ./.env && set +a && ./bin/goose -dir $(MIGRATIONS) postgres "$$DB_DSN" status
+
+.PHONY: migrate-down
+migrate-down: goose ## Roll back the most recent migration
+	cd $(BACKEND) && set -a && . ./.env && set +a && ./bin/goose -dir $(MIGRATIONS) postgres "$$DB_DSN" down
 
 # ---- docker ----
 .PHONY: docker-build

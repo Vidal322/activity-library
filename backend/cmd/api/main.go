@@ -13,7 +13,10 @@ import (
 	"github.com/Vidal322/activity-library/internal/store"
 )
 
-const dbStartupTimeout = 10 * time.Second
+const (
+	dbStartupTimeout         = 10 * time.Second
+	migrationsStartupTimeout = 20 * time.Second
+)
 
 var version = "dev"
 
@@ -28,8 +31,6 @@ func main() {
 	}
 }
 
-// run holds what main used to do. os.Exit skips deferred calls, so keeping it
-// in main alone is what lets the deferred pool.Close below actually run.
 func run() error {
 	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read .env: %w", err)
@@ -54,6 +55,12 @@ func run() error {
 	defer pool.Close()
 
 	slog.Info("Database pool ready", "db", cfg.DB)
+	ctx, cancel = context.WithTimeout(context.Background(), migrationsStartupTimeout)
+	defer cancel()
+
+	if err := store.Migrate(ctx, pool); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
 
 	api := application{
 		config: cfg,
