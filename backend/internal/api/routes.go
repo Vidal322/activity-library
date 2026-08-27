@@ -9,8 +9,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// routes is the whole API surface in one place. Handler methods live beside it
-// in this package, one file per resource.
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
 
@@ -25,7 +23,7 @@ func (s *Server) routes() http.Handler {
 	r.Get("/readyz", s.handleReadiness)
 
 	r.Route("/v1", func(r chi.Router) {
-		// resource routes go here
+		r.Get("/games", s.handleGamesList)
 	})
 
 	return r
