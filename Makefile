@@ -13,6 +13,10 @@ LDFLAGS     := -s -w -X main.version=$(VERSION)
 
 GO          ?= go
 
+# The database the test harness connects to. The harness refuses any name not
+# ending in _test, because it truncates every table it finds.
+DB_TEST_NAME ?= activity_library_test
+
 MIGRATIONS  := internal/store/migrations
 # The goose CLI compiles in one driver per database it supports. Exclude every
 # dialect but postgres: nothing else is needed, and each one drags in its own
@@ -50,13 +54,18 @@ clean: ## Remove build output
 	rm -rf $(BIN_DIR)
 
 # ---- quality ----
+# -p 1 runs one package at a time. The database-backed tests truncate every
+# table at setup, so two packages running at once would wipe each other's rows
+# mid-test. The alternative, a database per package, buys back the parallelism
+# at the cost of provisioning and naming one database per package; revisit it if
+# the suite ever gets slow enough to care.
 .PHONY: test
-test: ## Run tests
-	$(GO) test -C $(BACKEND) -race ./...
+test: ## Run tests (set DB_TEST_DSN to include the database-backed ones)
+	$(GO) test -C $(BACKEND) -race -p 1 ./...
 
 .PHONY: cover
 cover: ## Run tests and open an HTML coverage report
-	$(GO) test -C $(BACKEND) -race -coverprofile=coverage.out ./...
+	$(GO) test -C $(BACKEND) -race -p 1 -coverprofile=coverage.out ./...
 	$(GO) tool -C $(BACKEND) cover -html=coverage.out
 
 .PHONY: fmt
@@ -108,6 +117,25 @@ seed: db-up ## Insert the development dataset (idempotent; local databases only)
 	@# Runs migrations itself, so this works against a freshly reset database
 	@# without starting the API first.
 	$(GO) run -C $(BACKEND) ./cmd/seed
+
+.PHONY: db-test-create
+db-test-create: db-up ## Create the test database and print the DB_TEST_DSN to export
+	@# The API's own migrations run against it from TestMain, so an empty
+	@# database is all this has to produce.
+	@# DB_TEST_DSN is printed rather than written to backend/.env on purpose:
+	@# godotenv loads that file at startup, and a truncating harness should
+	@# never be one stray import away from the development database.
+	@set -a && . ./$(BACKEND)/.env && set +a && \
+		{ $(COMPOSE) exec -T postgres createdb -U "$$POSTGRES_USER" $(DB_TEST_NAME) 2>/dev/null \
+			|| echo "database $(DB_TEST_NAME) already exists"; } && \
+		echo "" && \
+		echo "Export this before running the database-backed tests:" && \
+		echo "  export DB_TEST_DSN=\"$${DB_DSN%/*}/$(DB_TEST_NAME)?sslmode=disable\""
+
+.PHONY: db-test-drop
+db-test-drop: ## Delete the test database
+	@set -a && . ./$(BACKEND)/.env && set +a && \
+		$(COMPOSE) exec -T postgres dropdb --if-exists -U "$$POSTGRES_USER" $(DB_TEST_NAME)
 
 .PHONY: db-logs
 db-logs: ## Follow the database service logs
