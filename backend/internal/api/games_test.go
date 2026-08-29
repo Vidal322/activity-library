@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -19,6 +20,9 @@ const (
 	testGamePublishedOlder = "60000000-0000-7000-8000-0000000000a2"
 	testGameDraft          = "60000000-0000-7000-8000-0000000000a3"
 	testGameVariant        = "60000000-0000-7000-8000-0000000000a4"
+
+	// testGameMissing is well formed and deliberately never inserted.
+	testGameMissing = "60000000-0000-7000-8000-0000000000ff"
 )
 
 // testGame mirrors the columns the list endpoint reads, plus the two that
@@ -332,4 +336,183 @@ func deref[T any](p *T) any {
 		return "null"
 	}
 	return *p
+}
+
+// getGame performs the request and hands back the status alongside the body, so
+// the error-path tests can assert on a 404 or a 400 rather than fataling the
+// way getGames does.
+func getGame(t *testing.T, baseURL, id string) (int, []byte) {
+	t.Helper()
+
+	res, err := http.Get(baseURL + "/v1/games/" + id)
+	if err != nil {
+		t.Fatalf("GET /v1/games/%s: %v", id, err)
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("could not read the response body: %v", err)
+	}
+
+	return res.StatusCode, body
+}
+
+// TestHandleGetGameReturnsTheRow pins the wire shape of the happy path. It is
+// the same envelope-free summary the list endpoint emits, so a client reading a
+// card and a client reading a game see one shape.
+func TestHandleGetGameReturnsTheRow(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+
+	want := gameSummary{
+		ID:              testGamePublishedNewer,
+		Title:           "Human Knot",
+		Description:     "Untangle the circle without letting go.",
+		Image:           ptr("https://example.test/knot.png"),
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		NoMaterials:     true,
+	}
+
+	// A second row the request must not return, so a query that ignores its
+	// argument fails here instead of passing by luck.
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedOlder,
+		Title:           "Not the one asked for",
+		MinParticipants: ptr(int32(2)),
+		MaxParticipants: ptr(int32(4)),
+		DurationMin:     ptr(int32(5)),
+		DurationMax:     ptr(int32(10)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	})
+	insertGame(t, ctx, pool, testGame{
+		ID:              want.ID,
+		Title:           want.Title,
+		Description:     want.Description,
+		Image:           want.Image,
+		MinParticipants: want.MinParticipants,
+		MaxParticipants: want.MaxParticipants,
+		DurationMin:     want.DurationMin,
+		DurationMax:     want.DurationMax,
+		NoMaterials:     want.NoMaterials,
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC),
+	})
+
+	status, body := getGame(t, srv.URL, want.ID)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, body)
+	}
+
+	var got gameSummary
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+
+	assertSummary(t, got, want)
+}
+
+// TestHandleGetGameKeepsVariantNullsNull is the null-vs-zero trap the list
+// endpoint also guards: a variant carries no participants or duration of its
+// own, and the response must say null rather than claim zero.
+func TestHandleGetGameKeepsVariantNullsNull(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+
+	original := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "The original",
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		PublishState:    "published",
+		CreatedAt:       original,
+	})
+	insertGame(t, ctx, pool, testGame{
+		ID:           testGameVariant,
+		Title:        "A variant with nothing of its own",
+		PublishState: "published",
+		OriginalID:   ptr(testGamePublishedNewer),
+		CreatedAt:    original.Add(time.Hour),
+	})
+
+	status, body := getGame(t, srv.URL, testGameVariant)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, body)
+	}
+
+	var got gameSummary
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+
+	assertSummary(t, got, gameSummary{
+		ID:    testGameVariant,
+		Title: "A variant with nothing of its own",
+	})
+}
+
+// TestHandleGetGameUnknownID is the path that only works because the store
+// collects exactly one row: an empty result has to surface as pgx.ErrNoRows for
+// classify to turn it into ErrNotFound, and a slice-collecting query would
+// panic or return a zero value instead.
+func TestHandleGetGameUnknownID(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "The only game in the table",
+		MinParticipants: ptr(int32(2)),
+		MaxParticipants: ptr(int32(4)),
+		DurationMin:     ptr(int32(5)),
+		DurationMax:     ptr(int32(10)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	})
+
+	status, body := getGame(t, srv.URL, testGameMissing)
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusNotFound, body)
+	}
+}
+
+// TestHandleGetGameMalformedID guards the reason the handler parses the id
+// before querying: Postgres answers a malformed uuid with 22P02, which classify
+// does not recognise and writeStoreError would report as a 500.
+func TestHandleGetGameMalformedID(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	for _, id := range []string{
+		"not-a-uuid",
+		"60000000-0000-7000-8000-0000000000zz",
+		"60000000-0000-7000-8000",
+	} {
+		t.Run(id, func(t *testing.T) {
+			status, body := getGame(t, srv.URL, id)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (body %s)", status, http.StatusBadRequest, body)
+			}
+
+			var got map[string]string
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("could not decode the response body: %v", err)
+			}
+			if got["error"] == "" {
+				t.Errorf("body = %s, want an error message", body)
+			}
+		})
+	}
 }

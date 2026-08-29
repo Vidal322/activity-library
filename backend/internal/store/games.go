@@ -44,3 +44,26 @@ func ListGames(ctx context.Context, pool *pgxpool.Pool) ([]Game, error) {
 
 	return games, nil
 }
+
+const getGameQuery = `
+	SELECT id, title, description, image,
+	       min_participants, max_participants,
+	       duration_min, duration_max,
+	       no_materials
+	FROM games
+	WHERE id = $1
+	`
+
+// Get game by id
+func GetGameByID(ctx context.Context, pool *pgxpool.Pool, gameId string) (Game, error) {
+	row, err := pool.Query(ctx, getGameQuery, gameId)
+	if err != nil {
+		return Game{}, classify(err)
+	}
+
+	game, err := pgx.CollectExactlyOneRow(row, pgx.RowToStructByName[Game])
+	if err != nil {
+		return Game{}, classify(err)
+	}
+	return game, nil
+}

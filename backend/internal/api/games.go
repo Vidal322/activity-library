@@ -4,6 +4,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/Vidal322/activity-library/internal/store"
 )
 
@@ -53,5 +56,28 @@ func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 
 	if err := writeJSON(w, http.StatusOK, gamesListResponse{Games: summaries}); err != nil {
 		slog.Error("Failed to write games list response", "error", err)
+	}
+}
+
+// handleGetGame serves GET /v1/games/{id}.
+func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
+	gameID := chi.URLParam(r, "id")
+
+	var parsed pgtype.UUID
+	if err := parsed.Scan(gameID); err != nil {
+		if err := writeErrorJSON(w, http.StatusBadRequest, "malformed game id"); err != nil {
+			slog.Error("Failed to write get game error response", "error", err)
+		}
+		return
+	}
+
+	game, err := store.GetGameByID(r.Context(), s.pool, gameID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	if err := writeJSON(w, http.StatusOK, newGameSummary(game)); err != nil {
+		slog.Error("Failed to write get game response", "error", err)
 	}
 }
