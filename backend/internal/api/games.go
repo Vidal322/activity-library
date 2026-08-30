@@ -41,6 +41,57 @@ func newGameSummary(g store.Game) gameSummary {
 	}
 }
 
+// gameCategory carries its family alongside the category, so the detail page
+// can group the badges without resolving families itself.
+type gameCategory struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Active       bool   `json:"active"`
+	DisplayOrder int32  `json:"display_order"`
+	FamilyID     string `json:"family_id"`
+	FamilyName   string `json:"family_name"`
+}
+
+type gameLocation struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// gameDetail embeds the summary so a card and a detail page read the same
+// spine fields, and adds the associations. Both arrays are always present.
+type gameDetail struct {
+	gameSummary
+	Categories []gameCategory `json:"categories"`
+	Locations  []gameLocation `json:"locations"`
+}
+
+func newGameDetail(g store.GameDetail) gameDetail {
+	categories := make([]gameCategory, 0, len(g.Categories))
+	for _, c := range g.Categories {
+		categories = append(categories, gameCategory{
+			ID:           c.ID,
+			Name:         c.Name,
+			Description:  c.Description,
+			Active:       c.Active,
+			DisplayOrder: c.DisplayOrder,
+			FamilyID:     c.FamilyID,
+			FamilyName:   c.FamilyName,
+		})
+	}
+
+	locations := make([]gameLocation, 0, len(g.Locations))
+	for _, l := range g.Locations {
+		locations = append(locations, gameLocation{ID: l.ID, Name: l.Name})
+	}
+
+	return gameDetail{
+		gameSummary: newGameSummary(g.Game),
+		Categories:  categories,
+		Locations:   locations,
+	}
+}
+
 // handleGamesList serves GET /v1/games.
 func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 	games, err := store.ListGames(r.Context(), s.pool)
@@ -77,7 +128,7 @@ func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := writeJSON(w, http.StatusOK, newGameSummary(game)); err != nil {
+	if err := writeJSON(w, http.StatusOK, newGameDetail(game)); err != nil {
 		slog.Error("Failed to write get game response", "error", err)
 	}
 }

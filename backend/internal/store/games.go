@@ -45,25 +45,97 @@ func ListGames(ctx context.Context, pool *pgxpool.Pool) ([]Game, error) {
 	return games, nil
 }
 
+// GameCategory is one category a game carries, with its family inlined so the
+// client can group the list without a second request.
+type GameCategory struct {
+	ID           string `db:"id"`
+	Name         string `db:"name"`
+	Description  string `db:"description"`
+	Active       bool   `db:"active"`
+	DisplayOrder int32  `db:"display_order"`
+	FamilyID     string `db:"family_id"`
+	FamilyName   string `db:"family_name"`
+}
+
+// Location is one place a game can be played.
+type Location struct {
+	ID   string `db:"id"`
+	Name string `db:"name"`
+}
+
+type GameDetail struct {
+	Game
+	Categories []GameCategory
+	Locations  []Location
+}
+
 const getGameQuery = `
 	SELECT id, title, description, image,
 	       min_participants, max_participants,
 	       duration_min, duration_max,
 	       no_materials
 	FROM games
-	WHERE id = $1
-	`
+	WHERE id = $1`
 
-// Get game by id
-func GetGameByID(ctx context.Context, pool *pgxpool.Pool, gameId string) (Game, error) {
+const getGameCategoriesQuery = `
+	SELECT c.id, c.name, c.description, c.active, c.display_order,
+	       f.id AS family_id, f.name AS family_name
+	FROM game_categories gc
+	JOIN categories c ON c.id = gc.category_id
+	JOIN category_families f ON f.id = c.family_id
+	WHERE gc.game_id = $1
+	ORDER BY f.display_order, f.name, c.display_order, c.name`
+
+const getGameLocationsQuery = `
+	SELECT l.id, l.name
+	FROM game_locations gl
+	JOIN locations l ON l.id = gl.location_id
+	WHERE gl.game_id = $1
+	ORDER BY l.name`
+
+// GetGameByID returns one game with its categories and locations.
+func GetGameByID(ctx context.Context, pool *pgxpool.Pool, gameId string) (GameDetail, error) {
 	row, err := pool.Query(ctx, getGameQuery, gameId)
 	if err != nil {
-		return Game{}, classify(err)
+		return GameDetail{}, classify(err)
 	}
 
 	game, err := pgx.CollectExactlyOneRow(row, pgx.RowToStructByName[Game])
 	if err != nil {
-		return Game{}, classify(err)
+		return GameDetail{}, classify(err)
 	}
-	return game, nil
+
+	categories, err := collectByGame[GameCategory](ctx, pool, getGameCategoriesQuery, gameId)
+	if err != nil {
+		return GameDetail{}, err
+	}
+
+	locations, err := collectByGame[Location](ctx, pool, getGameLocationsQuery, gameId)
+	if err != nil {
+		return GameDetail{}, err
+	}
+
+	return GameDetail{Game: game, Categories: categories, Locations: locations}, nil
+}
+
+func collectByGame[T any](
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	query, gameId string,
+) ([]T, error) {
+	rows, err := pool.Query(ctx, query, gameId)
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	values, err := pgx.CollectRows(rows, pgx.RowToStructByName[T])
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	if values == nil {
+		values = []T{}
+	}
+
+	return values, nil
 }

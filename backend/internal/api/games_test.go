@@ -23,6 +23,16 @@ const (
 
 	// testGameMissing is well formed and deliberately never inserted.
 	testGameMissing = "60000000-0000-7000-8000-0000000000ff"
+
+	// Association fixtures. The prefixes match the seed data: 2 families,
+	// 3 categories, 4 locations.
+	testFamilyPurpose = "20000000-0000-7000-8000-0000000000a1"
+	testFamilyEnergy  = "20000000-0000-7000-8000-0000000000a2"
+
+	testCategoryIcebreaker = "30000000-0000-7000-8000-0000000000a1"
+	testCategoryActive     = "30000000-0000-7000-8000-0000000000a2"
+
+	testLocationIndoor = "40000000-0000-7000-8000-0000000000a1"
 )
 
 // testGame mirrors the columns the list endpoint reads, plus the two that
@@ -75,6 +85,61 @@ func insertGame(t *testing.T, ctx context.Context, pool *pgxpool.Pool, g testGam
 		g.NoMaterials, g.PublishState, testAuthorID, g.OriginalID, g.CreatedAt)
 	if err != nil {
 		t.Fatalf("could not insert game %s: %v", g.Title, err)
+	}
+}
+
+// insertCategory writes a category and its family, so a test naming one
+// category does not have to spell out the family row that categories.family_id
+// requires.
+func insertCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool, c gameCategory, familyOrder int32) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO category_families (id, name, display_order)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (id) DO NOTHING`,
+		c.FamilyID, c.FamilyName, familyOrder)
+	if err != nil {
+		t.Fatalf("could not insert the family %s: %v", c.FamilyName, err)
+	}
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO categories (id, family_id, name, description, active, display_order)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		c.ID, c.FamilyID, c.Name, c.Description, c.Active, c.DisplayOrder)
+	if err != nil {
+		t.Fatalf("could not insert the category %s: %v", c.Name, err)
+	}
+}
+
+func insertLocation(t *testing.T, ctx context.Context, pool *pgxpool.Pool, l gameLocation) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `INSERT INTO locations (id, name) VALUES ($1, $2)`, l.ID, l.Name)
+	if err != nil {
+		t.Fatalf("could not insert the location %s: %v", l.Name, err)
+	}
+}
+
+func linkGameCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool, gameID, categoryID string) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO game_categories (game_id, category_id) VALUES ($1, $2)`,
+		gameID, categoryID)
+	if err != nil {
+		t.Fatalf("could not link category %s to game %s: %v", categoryID, gameID, err)
+	}
+}
+
+func linkGameLocation(t *testing.T, ctx context.Context, pool *pgxpool.Pool, gameID, locationID string) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO game_locations (game_id, location_id) VALUES ($1, $2)`,
+		gameID, locationID)
+	if err != nil {
+		t.Fatalf("could not link location %s to game %s: %v", locationID, gameID, err)
 	}
 }
 
@@ -514,5 +579,139 @@ func TestHandleGetGameMalformedID(t *testing.T) {
 				t.Errorf("body = %s, want an error message", body)
 			}
 		})
+	}
+}
+
+// TestHandleGetGameIncludesAssociations is what the detail payload exists for:
+// both join tables come back on the game, and each category carries the family
+// it belongs to.
+func TestHandleGetGameIncludesAssociations(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "Human Knot",
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	})
+
+	// The energetic category is written first and belongs to the family with
+	// the higher display_order, so a response in insertion order fails here.
+	active := gameCategory{
+		ID:           testCategoryActive,
+		Name:         "Active",
+		Description:  "Gets everyone moving.",
+		Active:       true,
+		DisplayOrder: 1,
+		FamilyID:     testFamilyEnergy,
+		FamilyName:   "Energy",
+	}
+	icebreaker := gameCategory{
+		ID:           testCategoryIcebreaker,
+		Name:         "Icebreaker",
+		Description:  "Opens a group that has just met.",
+		Active:       true,
+		DisplayOrder: 2,
+		FamilyID:     testFamilyPurpose,
+		FamilyName:   "Purpose",
+	}
+	indoor := gameLocation{ID: testLocationIndoor, Name: "Indoor"}
+
+	insertCategory(t, ctx, pool, active, 2)
+	insertCategory(t, ctx, pool, icebreaker, 1)
+	insertLocation(t, ctx, pool, indoor)
+
+	linkGameCategory(t, ctx, pool, testGamePublishedNewer, active.ID)
+	linkGameCategory(t, ctx, pool, testGamePublishedNewer, icebreaker.ID)
+	linkGameLocation(t, ctx, pool, testGamePublishedNewer, indoor.ID)
+
+	// A second game holding the same rows, so a query that ignores its
+	// argument and returns every link fails here.
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedOlder,
+		Title:           "Not the one asked for",
+		MinParticipants: ptr(int32(2)),
+		MaxParticipants: ptr(int32(4)),
+		DurationMin:     ptr(int32(5)),
+		DurationMax:     ptr(int32(10)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+	})
+	linkGameCategory(t, ctx, pool, testGamePublishedOlder, active.ID)
+	linkGameLocation(t, ctx, pool, testGamePublishedOlder, indoor.ID)
+
+	status, body := getGame(t, srv.URL, testGamePublishedNewer)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, body)
+	}
+
+	var got gameDetail
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+
+	want := []gameCategory{icebreaker, active}
+	if len(got.Categories) != len(want) {
+		t.Fatalf("got %d categories %+v, want %d", len(got.Categories), got.Categories, len(want))
+	}
+	for i := range want {
+		if got.Categories[i] != want[i] {
+			t.Errorf("categories[%d] = %+v, want %+v", i, got.Categories[i], want[i])
+		}
+	}
+
+	if len(got.Locations) != 1 {
+		t.Fatalf("got %d locations %+v, want 1", len(got.Locations), got.Locations)
+	}
+	if got.Locations[0] != indoor {
+		t.Errorf("locations[0] = %+v, want %+v", got.Locations[0], indoor)
+	}
+}
+
+// TestHandleGetGameEmptyAssociations guards the make-with-zero-length in
+// newGameDetail: a game with no links must answer with [] rather than null, so
+// the frontend never branches on the difference.
+func TestHandleGetGameEmptyAssociations(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "Unclassified",
+		MinParticipants: ptr(int32(2)),
+		MaxParticipants: ptr(int32(4)),
+		DurationMin:     ptr(int32(5)),
+		DurationMax:     ptr(int32(10)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	})
+
+	status, body := getGame(t, srv.URL, testGamePublishedNewer)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, body)
+	}
+
+	// RawMessage rather than the response struct: null and [] both decode to a
+	// nil slice, so only the bytes tell them apart.
+	var got struct {
+		Categories json.RawMessage `json:"categories"`
+		Locations  json.RawMessage `json:"locations"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+
+	if s := string(got.Categories); s != "[]" {
+		t.Errorf("categories = %s, want []", s)
+	}
+	if s := string(got.Locations); s != "[]" {
+		t.Errorf("locations = %s, want []", s)
 	}
 }
