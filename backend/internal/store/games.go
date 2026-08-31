@@ -63,10 +63,20 @@ type Location struct {
 	Name string `db:"name"`
 }
 
+type GameMaterial struct {
+	ID                     string `db:"id"`
+	Name                   string `db:"name"`
+	Description            string `db:"description"`
+	QuantityBase           int32  `db:"quantity_base"`
+	QuantityPerParticipant int32  `db:"quantity_per_participant"`
+	Optional               bool   `db:"optional"`
+}
+
 type GameDetail struct {
 	Game
 	Categories []GameCategory
 	Locations  []Location
+	Materials  []GameMaterial
 }
 
 const getGameQuery = `
@@ -93,7 +103,15 @@ const getGameLocationsQuery = `
 	WHERE gl.game_id = $1
 	ORDER BY l.name`
 
-// GetGameByID returns one game with its categories and locations.
+const getGameMaterialRequirementsQuery = `
+	SELECT m.id, m.name, m.description,
+	       gm.quantity_base, gm.quantity_per_participant, gm.optional
+	FROM game_materials gm
+	JOIN materials m ON m.id = gm.material_id
+	WHERE gm.game_id = $1
+	ORDER BY m.name`
+
+// GetGameByID returns one game with its categories, locations and materials.
 func GetGameByID(ctx context.Context, pool *pgxpool.Pool, gameId string) (GameDetail, error) {
 	row, err := pool.Query(ctx, getGameQuery, gameId)
 	if err != nil {
@@ -115,7 +133,22 @@ func GetGameByID(ctx context.Context, pool *pgxpool.Pool, gameId string) (GameDe
 		return GameDetail{}, err
 	}
 
-	return GameDetail{Game: game, Categories: categories, Locations: locations}, nil
+	materials, err := collectByGame[GameMaterial](
+		ctx,
+		pool,
+		getGameMaterialRequirementsQuery,
+		gameId,
+	)
+	if err != nil {
+		return GameDetail{}, err
+	}
+
+	return GameDetail{
+		Game:       game,
+		Categories: categories,
+		Locations:  locations,
+		Materials:  materials,
+	}, nil
 }
 
 func collectByGame[T any](

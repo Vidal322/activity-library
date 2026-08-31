@@ -33,6 +33,9 @@ const (
 	testCategoryActive     = "30000000-0000-7000-8000-0000000000a2"
 
 	testLocationIndoor = "40000000-0000-7000-8000-0000000000a1"
+
+	testMaterialRope      = "50000000-0000-7000-8000-0000000000a1"
+	testMaterialBlindfold = "50000000-0000-7000-8000-0000000000a2"
 )
 
 // testGame mirrors the columns the list endpoint reads, plus the two that
@@ -140,6 +143,33 @@ func linkGameLocation(t *testing.T, ctx context.Context, pool *pgxpool.Pool, gam
 		gameID, locationID)
 	if err != nil {
 		t.Fatalf("could not link location %s to game %s: %v", locationID, gameID, err)
+	}
+}
+
+func insertMaterial(t *testing.T, ctx context.Context, pool *pgxpool.Pool, m gameMaterial) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO materials (id, name, description) VALUES ($1, $2, $3)`,
+		m.ID, m.Name, m.Description)
+	if err != nil {
+		t.Fatalf("could not insert the material %s: %v", m.Name, err)
+	}
+}
+
+// linkGameMaterial writes the join row, which unlike the other two carries a
+// payload: the quantities and the optional flag come from the link, not the
+// material.
+func linkGameMaterial(t *testing.T, ctx context.Context, pool *pgxpool.Pool, gameID string, m gameMaterial) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO game_materials (
+			game_id, material_id, quantity_base, quantity_per_participant, optional)
+		VALUES ($1, $2, $3, $4, $5)`,
+		gameID, m.ID, m.QuantityBase, m.QuantityPerParticipant, m.Optional)
+	if err != nil {
+		t.Fatalf("could not link material %s to game %s: %v", m.ID, gameID, err)
 	}
 }
 
@@ -703,6 +733,7 @@ func TestHandleGetGameEmptyAssociations(t *testing.T) {
 	var got struct {
 		Categories json.RawMessage `json:"categories"`
 		Locations  json.RawMessage `json:"locations"`
+		Materials  json.RawMessage `json:"materials"`
 	}
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("could not decode the response body: %v", err)
@@ -713,5 +744,166 @@ func TestHandleGetGameEmptyAssociations(t *testing.T) {
 	}
 	if s := string(got.Locations); s != "[]" {
 		t.Errorf("locations = %s, want []", s)
+	}
+	if s := string(got.Materials); s != "[]" {
+		t.Errorf("materials = %s, want []", s)
+	}
+}
+
+// TestHandleGetGameIncludesMaterialQuantities is the round trip issue #16 asks
+// for: quantity_base, quantity_per_participant and optional are what make a kit
+// list renderable, and all three live on the join row rather than the material,
+// so a query that forgot to select them still returns a plausible-looking name.
+func TestHandleGetGameIncludesMaterialQuantities(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "Blindfold Maze",
+		MinParticipants: ptr(int32(4)),
+		MaxParticipants: ptr(int32(12)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(20)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	})
+
+	// The three columns are given three different values per material, so a
+	// mapping that crossed two of them fails here. Rope is written first and
+	// sorts second, so a response in insertion order fails too.
+	rope := gameMaterial{
+		ID:                     testMaterialRope,
+		Name:                   "Rope",
+		Description:            "Roughly 10 metres, soft enough to hold.",
+		QuantityBase:           2,
+		QuantityPerParticipant: 0,
+		Optional:               true,
+	}
+	blindfold := gameMaterial{
+		ID:                     testMaterialBlindfold,
+		Name:                   "Blindfold",
+		Description:            "An opaque cloth or sleep mask.",
+		QuantityBase:           0,
+		QuantityPerParticipant: 1,
+		Optional:               false,
+	}
+
+	insertMaterial(t, ctx, pool, rope)
+	insertMaterial(t, ctx, pool, blindfold)
+	linkGameMaterial(t, ctx, pool, testGamePublishedNewer, rope)
+	linkGameMaterial(t, ctx, pool, testGamePublishedNewer, blindfold)
+
+	// A second game holding the same material at a different quantity, so a
+	// query that ignores its argument fails rather than passing by coincidence.
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedOlder,
+		Title:           "Not the one asked for",
+		MinParticipants: ptr(int32(2)),
+		MaxParticipants: ptr(int32(4)),
+		DurationMin:     ptr(int32(5)),
+		DurationMax:     ptr(int32(10)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+	})
+	other := rope
+	other.QuantityBase = 99
+	linkGameMaterial(t, ctx, pool, testGamePublishedOlder, other)
+
+	status, body := getGame(t, srv.URL, testGamePublishedNewer)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, body)
+	}
+
+	var got gameDetail
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+
+	want := []gameMaterial{blindfold, rope}
+	if len(got.Materials) != len(want) {
+		t.Fatalf("got %d materials %+v, want %d", len(got.Materials), got.Materials, len(want))
+	}
+	for i := range want {
+		if got.Materials[i] != want[i] {
+			t.Errorf("materials[%d] = %+v, want %+v", i, got.Materials[i], want[i])
+		}
+	}
+
+	if got.NoMaterials {
+		t.Errorf("no_materials = true, want false for a game that needs materials")
+	}
+}
+
+// TestHandleGetGameNoMaterialsIsDistinguishable covers the other half of issue
+// #16: "needs nothing" and "nobody has filled the list in yet" are different
+// states, and both answer with an empty array. Only the flag separates them, so
+// a client that reads the array alone cannot tell a deliberate empty kit from
+// an incomplete record.
+func TestHandleGetGameNoMaterialsIsDistinguishable(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+
+	// Declared to need nothing.
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "Circle of Words",
+		MinParticipants: ptr(int32(4)),
+		MaxParticipants: ptr(int32(20)),
+		DurationMin:     ptr(int32(5)),
+		DurationMax:     ptr(int32(10)),
+		NoMaterials:     true,
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	})
+
+	// Not declared, and nothing linked yet.
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedOlder,
+		Title:           "Unfinished",
+		MinParticipants: ptr(int32(2)),
+		MaxParticipants: ptr(int32(4)),
+		DurationMin:     ptr(int32(5)),
+		DurationMax:     ptr(int32(10)),
+		NoMaterials:     false,
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+	})
+
+	for _, tc := range []struct {
+		name           string
+		gameID         string
+		wantNoMaterial bool
+	}{
+		{"declared to need nothing", testGamePublishedNewer, true},
+		{"list not filled in yet", testGamePublishedOlder, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := getGame(t, srv.URL, tc.gameID)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, body)
+			}
+
+			// RawMessage for the array, for the reason
+			// TestHandleGetGameEmptyAssociations gives: null and [] both
+			// decode to a nil slice.
+			var got struct {
+				NoMaterials bool            `json:"no_materials"`
+				Materials   json.RawMessage `json:"materials"`
+			}
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("could not decode the response body: %v", err)
+			}
+
+			if s := string(got.Materials); s != "[]" {
+				t.Errorf("materials = %s, want []", s)
+			}
+			if got.NoMaterials != tc.wantNoMaterial {
+				t.Errorf("no_materials = %t, want %t", got.NoMaterials, tc.wantNoMaterial)
+			}
+		})
 	}
 }
