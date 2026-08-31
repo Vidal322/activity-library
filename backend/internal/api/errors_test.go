@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -78,6 +79,27 @@ func TestStoreErrorResponse(t *testing.T) {
 			in:         store.ErrInUse,
 			wantStatus: http.StatusConflict,
 			wantMsg:    "still referenced by other records",
+		},
+		{
+			// The only branch that answers with the error's own text: it is
+			// built from the ids the client sent, not from anything internal.
+			name: "unknown filter id names the ids",
+			in: &store.UnknownFilterError{
+				Field: "category",
+				IDs:   []string{"30000000-0000-7000-8000-0000000000ff"},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    "unknown category: 30000000-0000-7000-8000-0000000000ff",
+		},
+		{
+			// Wrapped, since a store call may add context on the way out.
+			name: "wrapped unknown filter id still maps",
+			in: fmt.Errorf("listing games: %w", &store.UnknownFilterError{
+				Field: "location",
+				IDs:   []string{"40000000-0000-7000-8000-0000000000ff"},
+			}),
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    "unknown location: 40000000-0000-7000-8000-0000000000ff",
 		},
 		{
 			// Anything the store did not classify is ours, not the caller's,

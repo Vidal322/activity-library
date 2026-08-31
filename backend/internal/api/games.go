@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -165,8 +164,6 @@ func parseIDParam(values []string) ([]string, error) {
 func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
-	// Indexed rather than Get: Get returns only the first value, which would
-	// silently drop every id after the first and widen the filter.
 	categoryIDs, err := parseIDParam(query["category"])
 	if err != nil {
 		s.writeBadRequest(w, "category: "+err.Error())
@@ -184,14 +181,6 @@ func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 		LocationIDs: locationIDs,
 	})
 	if err != nil {
-		// An id that names no row is the client's mistake, not a server
-		// fault, so it answers 400 rather than falling through to a 500.
-		var unknown *store.UnknownFilterError
-		if errors.As(err, &unknown) {
-			s.writeBadRequest(w, unknown.Error())
-			return
-		}
-
 		s.writeStoreError(w, err)
 		return
 	}
