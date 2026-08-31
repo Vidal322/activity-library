@@ -67,16 +67,24 @@ type gameMaterial struct {
 	Optional               bool   `json:"optional"`
 }
 
+type gameBlock struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Content  string `json:"content"`
+	Position int32  `json:"position"`
+}
+
 // gameDetail embeds the summary so a card and a detail page read the same
 // spine fields, and adds the associations. The embed is untagged on purpose:
 // tagging it would nest the spine under a key instead of flattening it, and the
-// detail payload would stop being a superset of the card. All three arrays are
+// detail payload would stop being a superset of the card. Every array is
 // always present, so an empty one serializes as [] rather than null.
 type gameDetail struct {
 	gameSummary
 	Categories []gameCategory `json:"categories"`
 	Locations  []gameLocation `json:"locations"`
 	Materials  []gameMaterial `json:"materials"`
+	Blocks     []gameBlock    `json:"blocks"`
 }
 
 func newGameDetail(g store.GameDetail) gameDetail {
@@ -110,11 +118,20 @@ func newGameDetail(g store.GameDetail) gameDetail {
 		})
 	}
 
+	blocks := make([]gameBlock, 0, len(g.Blocks))
+	for _, b := range g.Blocks {
+		blocks = append(
+			blocks,
+			gameBlock{ID: b.ID, Type: b.Type, Content: b.Content, Position: b.Position},
+		)
+	}
+
 	return gameDetail{
 		gameSummary: newGameSummary(g.Game),
 		Categories:  categories,
 		Locations:   locations,
 		Materials:   materials,
+		Blocks:      blocks,
 	}
 }
 

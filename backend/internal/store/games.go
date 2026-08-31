@@ -72,11 +72,19 @@ type GameMaterial struct {
 	Optional               bool   `db:"optional"`
 }
 
+type GameBlock struct {
+	ID       string `db:"id"`
+	Type     string `db:"type"`
+	Content  string `db:"content"`
+	Position int32  `db:"position"`
+}
+
 type GameDetail struct {
 	Game
 	Categories []GameCategory
 	Locations  []Location
 	Materials  []GameMaterial
+	Blocks     []GameBlock
 }
 
 const getGameQuery = `
@@ -111,7 +119,14 @@ const getGameMaterialRequirementsQuery = `
 	WHERE gm.game_id = $1
 	ORDER BY m.name`
 
-// GetGameByID returns one game with its categories, locations and materials.
+const getGameBlocksQuery = `
+	SELECT b.id, b.type, b.content, b.position
+	FROM blocks b
+	WHERE b.game_id = $1
+	ORDER BY b.position`
+
+// GetGameByID returns one game with its categories, locations, materials and
+// blocks.
 func GetGameByID(ctx context.Context, pool *pgxpool.Pool, gameId string) (GameDetail, error) {
 	row, err := pool.Query(ctx, getGameQuery, gameId)
 	if err != nil {
@@ -143,11 +158,17 @@ func GetGameByID(ctx context.Context, pool *pgxpool.Pool, gameId string) (GameDe
 		return GameDetail{}, err
 	}
 
+	blocks, err := collectByGame[GameBlock](ctx, pool, getGameBlocksQuery, gameId)
+	if err != nil {
+		return GameDetail{}, err
+	}
+
 	return GameDetail{
 		Game:       game,
 		Categories: categories,
 		Locations:  locations,
 		Materials:  materials,
+		Blocks:     blocks,
 	}, nil
 }
 

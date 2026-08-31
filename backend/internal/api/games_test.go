@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"testing"
 	"time"
 
@@ -36,6 +37,13 @@ const (
 
 	testMaterialRope      = "50000000-0000-7000-8000-0000000000a1"
 	testMaterialBlindfold = "50000000-0000-7000-8000-0000000000a2"
+
+	// Deliberately not in position order: the id is a uuidv7, so an id sort
+	// and an insertion-time sort are the same sort, and a blocks query that
+	// forgot its ORDER BY would still look right if these lined up.
+	testBlockHeading = "70000000-0000-7000-8000-0000000000a3"
+	testBlockIntro   = "70000000-0000-7000-8000-0000000000a1"
+	testBlockSteps   = "70000000-0000-7000-8000-0000000000a2"
 )
 
 // testGame mirrors the columns the list endpoint reads, plus the two that
@@ -170,6 +178,20 @@ func linkGameMaterial(t *testing.T, ctx context.Context, pool *pgxpool.Pool, gam
 		gameID, m.ID, m.QuantityBase, m.QuantityPerParticipant, m.Optional)
 	if err != nil {
 		t.Fatalf("could not link material %s to game %s: %v", m.ID, gameID, err)
+	}
+}
+
+// insertBlock writes one block. Blocks hang off the game directly rather than
+// through a join, so the game id is a column here and not a second row.
+func insertBlock(t *testing.T, ctx context.Context, pool *pgxpool.Pool, gameID string, b gameBlock) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO blocks (id, game_id, type, content, position)
+		VALUES ($1, $2, $3, $4, $5)`,
+		b.ID, gameID, b.Type, b.Content, b.Position)
+	if err != nil {
+		t.Fatalf("could not insert block %s into game %s: %v", b.ID, gameID, err)
 	}
 }
 
@@ -734,6 +756,7 @@ func TestHandleGetGameEmptyAssociations(t *testing.T) {
 		Categories json.RawMessage `json:"categories"`
 		Locations  json.RawMessage `json:"locations"`
 		Materials  json.RawMessage `json:"materials"`
+		Blocks     json.RawMessage `json:"blocks"`
 	}
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("could not decode the response body: %v", err)
@@ -747,6 +770,9 @@ func TestHandleGetGameEmptyAssociations(t *testing.T) {
 	}
 	if s := string(got.Materials); s != "[]" {
 		t.Errorf("materials = %s, want []", s)
+	}
+	if s := string(got.Blocks); s != "[]" {
+		t.Errorf("blocks = %s, want []", s)
 	}
 }
 
@@ -906,4 +932,152 @@ func TestHandleGetGameNoMaterialsIsDistinguishable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHandleGetGameIncludesBlocksInPositionOrder is the round trip issue #17
+// asks for: blocks are a document, and position is the only thing that makes
+// them one. They are written here in the order 2, 0, 1, so a query that leans
+// on insertion order — or on the id, which is a uuidv7 and therefore sorts by
+// insertion time — fails rather than passing by coincidence.
+func TestHandleGetGameIncludesBlocksInPositionOrder(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "Human Knot",
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	})
+
+	heading := gameBlock{
+		ID:       testBlockHeading,
+		Type:     "heading",
+		Content:  "Como jogar",
+		Position: 0,
+	}
+	intro := gameBlock{
+		ID:       testBlockIntro,
+		Type:     "paragraph",
+		Content:  "O grupo forma um círculo apertado.",
+		Position: 1,
+	}
+	steps := gameBlock{
+		ID:       testBlockSteps,
+		Type:     "steps",
+		Content:  "1. Dar as mãos.\n2. Desfazer o nó.",
+		Position: 2,
+	}
+
+	insertBlock(t, ctx, pool, testGamePublishedNewer, steps)
+	insertBlock(t, ctx, pool, testGamePublishedNewer, heading)
+	insertBlock(t, ctx, pool, testGamePublishedNewer, intro)
+
+	// A second game whose block sits at position 0, so a query that ignores its
+	// argument would sort it to the front and fail here.
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedOlder,
+		Title:           "Not the one asked for",
+		MinParticipants: ptr(int32(2)),
+		MaxParticipants: ptr(int32(4)),
+		DurationMin:     ptr(int32(5)),
+		DurationMax:     ptr(int32(10)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+	})
+	insertBlock(t, ctx, pool, testGamePublishedOlder, gameBlock{
+		ID:       "70000000-0000-7000-8000-0000000000ff",
+		Type:     "paragraph",
+		Content:  "Belongs to another game.",
+		Position: 0,
+	})
+
+	status, body := getGame(t, srv.URL, testGamePublishedNewer)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, body)
+	}
+
+	var got gameDetail
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+
+	want := []gameBlock{heading, intro, steps}
+	if len(got.Blocks) != len(want) {
+		t.Fatalf("got %d blocks %+v, want %d", len(got.Blocks), got.Blocks, len(want))
+	}
+	for i := range want {
+		if got.Blocks[i] != want[i] {
+			t.Errorf("blocks[%d] = %+v, want %+v", i, got.Blocks[i], want[i])
+		}
+	}
+}
+
+// TestHandleGetGameOmitsBlockSearchColumn holds the other half of issue #17:
+// blocks.search is a generated tsvector, an index artefact no client has any
+// use for. Decoding into gameDetail would drop an extra key silently, so the
+// assertion is on the raw keys the handler actually wrote.
+func TestHandleGetGameOmitsBlockSearchColumn(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "Human Knot",
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	})
+	insertBlock(t, ctx, pool, testGamePublishedNewer, gameBlock{
+		ID:       testBlockIntro,
+		Type:     "paragraph",
+		Content:  "O grupo forma um círculo apertado.",
+		Position: 0,
+	})
+
+	status, body := getGame(t, srv.URL, testGamePublishedNewer)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, body)
+	}
+
+	var got struct {
+		Blocks []map[string]json.RawMessage `json:"blocks"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+	if len(got.Blocks) != 1 {
+		t.Fatalf("got %d blocks, want 1", len(got.Blocks))
+	}
+
+	wantKeys := []string{"id", "type", "content", "position"}
+	if len(got.Blocks[0]) != len(wantKeys) {
+		t.Errorf("blocks[0] has keys %v, want exactly %v", keysOf(got.Blocks[0]), wantKeys)
+	}
+	for _, k := range wantKeys {
+		if _, ok := got.Blocks[0][k]; !ok {
+			t.Errorf("blocks[0] is missing the key %q", k)
+		}
+	}
+	if _, ok := got.Blocks[0]["search"]; ok {
+		t.Errorf("blocks[0] carries the generated search column")
+	}
+}
+
+func keysOf(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
