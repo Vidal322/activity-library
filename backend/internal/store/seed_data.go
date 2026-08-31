@@ -69,10 +69,10 @@ type seedMaterial struct {
 }
 
 type seedGameMaterial struct {
-	MaterialID     string
-	Quantity       int
-	PerParticipant bool
-	Optional       bool
+	MaterialID             string
+	QuantityBase           int
+	QuantityPerParticipant int
+	Optional               bool
 }
 
 type seedBlock struct {
@@ -237,9 +237,9 @@ var seedGames = []seedGame{
 		Locations:       []string{locOutdoor, locSportsHall},
 		Inspirations:    []string{gameHumanKnot},
 		Materials: []seedGameMaterial{
-			{MaterialID: matBlindfold, Quantity: 1, PerParticipant: true},
-			{MaterialID: matRope, Quantity: 2},
-			{MaterialID: matBall, Quantity: 1, Optional: true},
+			{MaterialID: matBlindfold, QuantityPerParticipant: 1},
+			{MaterialID: matRope, QuantityBase: 2},
+			{MaterialID: matBall, QuantityBase: 1, Optional: true},
 		},
 		Blocks: []seedBlock{
 			{
@@ -276,7 +276,7 @@ var seedGames = []seedGame{
 		Categories:   []string{catReflection, catCalm},
 		Locations:    []string{locIndoor},
 		Materials: []seedGameMaterial{
-			{MaterialID: matPaper, Quantity: 1, PerParticipant: true, Optional: true},
+			{MaterialID: matPaper, QuantityPerParticipant: 1, Optional: true},
 		},
 		Blocks: []seedBlock{
 			{

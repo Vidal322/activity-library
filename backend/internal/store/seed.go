@@ -86,9 +86,9 @@ func Seed(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 		for _, m := range g.Materials {
 			batch.Queue(`INSERT INTO game_materials
-					(game_id, material_id, quantity, per_participant, optional)
+					(game_id, material_id, quantity_base, quantity_per_participant, optional)
 				VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-				g.ID, m.MaterialID, m.Quantity, m.PerParticipant, m.Optional)
+				g.ID, m.MaterialID, m.QuantityBase, m.QuantityPerParticipant, m.Optional)
 		}
 		for _, b := range g.Blocks {
 			// The arbiter is named here, unlike everywhere else: an untargeted
