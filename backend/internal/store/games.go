@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,18 +21,39 @@ type Game struct {
 	NoMaterials     bool    `db:"no_materials"`
 }
 
-const listGamesQuery = `
-	SELECT id, title, description, image,
-	       min_participants, max_participants,
-	       duration_min, duration_max,
-	       no_materials
-	FROM games
-	WHERE publish_state = 'published'
-	ORDER BY created_at DESC, id DESC`
+// GameFilter narrows the list. Ids within a field AND together, and the fields
+// AND with each other: a game has to carry every category and every location
+// asked for. The zero value filters nothing.
+type GameFilter struct {
+	CategoryIDs []string
+	LocationIDs []string
+}
 
-// ListGames returns every published game. Drafts are invisible to this query
-func ListGames(ctx context.Context, pool *pgxpool.Pool) ([]Game, error) {
-	rows, err := pool.Query(ctx, listGamesQuery)
+const listGamesQuery = `
+	SELECT g.id, g.title, g.description, g.image,
+	       g.min_participants, g.max_participants,
+	       g.duration_min, g.duration_max,
+	       g.no_materials
+	FROM games g
+	WHERE g.publish_state = 'published'
+	  AND (
+	        SELECT count(*) FROM game_categories gc
+	        WHERE gc.game_id = g.id AND gc.category_id = ANY($1::uuid[])
+	      ) = coalesce(cardinality($1::uuid[]), 0)
+	  AND (
+	        SELECT count(*) FROM game_locations gl
+	        WHERE gl.game_id = g.id AND gl.location_id = ANY($2::uuid[])
+	      ) = coalesce(cardinality($2::uuid[]), 0)
+	ORDER BY g.created_at DESC, g.id DESC`
+
+// ListGames returns every published game the filter admits. Drafts are
+// invisible to this query.
+func ListGames(ctx context.Context, pool *pgxpool.Pool, filter GameFilter) ([]Game, error) {
+	if err := checkFilterIDs(ctx, pool, filter); err != nil {
+		return nil, err
+	}
+
+	rows, err := pool.Query(ctx, listGamesQuery, filter.CategoryIDs, filter.LocationIDs)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -43,6 +66,85 @@ func ListGames(ctx context.Context, pool *pgxpool.Pool) ([]Game, error) {
 	}
 
 	return games, nil
+}
+
+// UnknownFilterError reports filter ids that name no row. Field is the query
+// parameter that carried them, so the handler can say which one to fix.
+type UnknownFilterError struct {
+	Field string
+	IDs   []string
+}
+
+func (e *UnknownFilterError) Error() string {
+	return "unknown " + e.Field + ": " + strings.Join(e.IDs, ", ")
+}
+
+// EXCEPT against the requested ids: what comes back is what the table does not
+// have. unnest is wrapped in a FROM so both sides of the EXCEPT are plain
+// single-column selects.
+const (
+	unknownCategoryIDsQuery = `
+		SELECT id FROM unnest($1::uuid[]) AS id
+		EXCEPT
+		SELECT id FROM categories`
+
+	unknownLocationIDsQuery = `
+		SELECT id FROM unnest($1::uuid[]) AS id
+		EXCEPT
+		SELECT id FROM locations`
+)
+
+// checkFilterIDs rejects the whole filter if any id is absent. It costs one
+// round trip per populated field, and none at all for an unfiltered list.
+func checkFilterIDs(ctx context.Context, pool *pgxpool.Pool, filter GameFilter) error {
+	if len(filter.CategoryIDs) > 0 {
+		missing, err := unknownIDs(ctx, pool, unknownCategoryIDsQuery, filter.CategoryIDs)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 {
+			return &UnknownFilterError{Field: "category", IDs: missing}
+		}
+	}
+
+	if len(filter.LocationIDs) > 0 {
+		missing, err := unknownIDs(ctx, pool, unknownLocationIDsQuery, filter.LocationIDs)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 {
+			return &UnknownFilterError{Field: "location", IDs: missing}
+		}
+	}
+
+	return nil
+}
+
+func unknownIDs(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	query string,
+	ids []string,
+) ([]string, error) {
+	rows, err := pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	// Scanned as uuid rather than string: the column is a uuid, and pgtype
+	// renders it in the canonical hyphenated form whatever spelling the client
+	// sent.
+	missing, err := pgx.CollectRows(rows, pgx.RowTo[pgtype.UUID])
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	out := make([]string, 0, len(missing))
+	for _, id := range missing {
+		out = append(out, id.String())
+	}
+
+	return out, nil
 }
 
 // GameCategory is one category a game carries, with its family inlined so the

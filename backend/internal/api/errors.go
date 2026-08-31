@@ -108,3 +108,11 @@ func message(err error, messages map[string]string, fallback string) string {
 	}
 	return fallback
 }
+
+// writeBadRequest answers a request the handler rejected before reaching the
+// store: a malformed id, or one that names nothing.
+func (s *Server) writeBadRequest(w http.ResponseWriter, msg string) {
+	if err := writeErrorJSON(w, http.StatusBadRequest, msg); err != nil {
+		slog.Error("Failed to write bad request response", "error", err)
+	}
+}

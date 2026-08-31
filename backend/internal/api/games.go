@@ -1,6 +1,8 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -75,10 +77,7 @@ type gameBlock struct {
 }
 
 // gameDetail embeds the summary so a card and a detail page read the same
-// spine fields, and adds the associations. The embed is untagged on purpose:
-// tagging it would nest the spine under a key instead of flattening it, and the
-// detail payload would stop being a superset of the card. Every array is
-// always present, so an empty one serializes as [] rather than null.
+// spine fields, and adds the associations.
 type gameDetail struct {
 	gameSummary
 	Categories []gameCategory `json:"categories"`
@@ -135,10 +134,64 @@ func newGameDetail(g store.GameDetail) gameDetail {
 	}
 }
 
-// handleGamesList serves GET /v1/games.
+// parseIDParam validates each repeated value of one query parameter as a UUID
+// and drops duplicates, which the store's AND match cannot tolerate.
+func parseIDParam(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	ids := make([]string, 0, len(values))
+	seen := make(map[[16]byte]struct{}, len(values))
+
+	for _, v := range values {
+		var parsed pgtype.UUID
+		if err := parsed.Scan(v); err != nil {
+			return nil, fmt.Errorf("%q is not a valid id", v)
+		}
+		if _, dup := seen[parsed.Bytes]; dup {
+			continue
+		}
+		seen[parsed.Bytes] = struct{}{}
+		ids = append(ids, v)
+	}
+
+	return ids, nil
+}
+
+// handleGamesList serves GET /v1/games, filtered by repeated category and
+// location parameters. Repeats AND together, so ?category=a&category=b asks for
+// the games carrying both.
 func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
-	games, err := store.ListGames(r.Context(), s.pool)
+	query := r.URL.Query()
+
+	// Indexed rather than Get: Get returns only the first value, which would
+	// silently drop every id after the first and widen the filter.
+	categoryIDs, err := parseIDParam(query["category"])
 	if err != nil {
+		s.writeBadRequest(w, "category: "+err.Error())
+		return
+	}
+
+	locationIDs, err := parseIDParam(query["location"])
+	if err != nil {
+		s.writeBadRequest(w, "location: "+err.Error())
+		return
+	}
+
+	games, err := store.ListGames(r.Context(), s.pool, store.GameFilter{
+		CategoryIDs: categoryIDs,
+		LocationIDs: locationIDs,
+	})
+	if err != nil {
+		// An id that names no row is the client's mistake, not a server
+		// fault, so it answers 400 rather than falling through to a 500.
+		var unknown *store.UnknownFilterError
+		if errors.As(err, &unknown) {
+			s.writeBadRequest(w, unknown.Error())
+			return
+		}
+
 		s.writeStoreError(w, err)
 		return
 	}
@@ -159,9 +212,7 @@ func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
 
 	var parsed pgtype.UUID
 	if err := parsed.Scan(gameID); err != nil {
-		if err := writeErrorJSON(w, http.StatusBadRequest, "malformed game id"); err != nil {
-			slog.Error("Failed to write get game error response", "error", err)
-		}
+		s.writeBadRequest(w, "malformed game id")
 		return
 	}
 

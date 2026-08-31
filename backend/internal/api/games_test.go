@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 	testGamePublishedOlder = "60000000-0000-7000-8000-0000000000a2"
 	testGameDraft          = "60000000-0000-7000-8000-0000000000a3"
 	testGameVariant        = "60000000-0000-7000-8000-0000000000a4"
+	testGamePublishedThird = "60000000-0000-7000-8000-0000000000a5"
 
 	// testGameMissing is well formed and deliberately never inserted.
 	testGameMissing = "60000000-0000-7000-8000-0000000000ff"
@@ -33,7 +35,13 @@ const (
 	testCategoryIcebreaker = "30000000-0000-7000-8000-0000000000a1"
 	testCategoryActive     = "30000000-0000-7000-8000-0000000000a2"
 
-	testLocationIndoor = "40000000-0000-7000-8000-0000000000a1"
+	testLocationIndoor  = "40000000-0000-7000-8000-0000000000a1"
+	testLocationOutdoor = "40000000-0000-7000-8000-0000000000a2"
+
+	// Well formed, deliberately never inserted: the filter has to reject
+	// these rather than answer an empty list.
+	testCategoryMissing = "30000000-0000-7000-8000-0000000000ff"
+	testLocationMissing = "40000000-0000-7000-8000-0000000000ff"
 
 	testMaterialRope      = "50000000-0000-7000-8000-0000000000a1"
 	testMaterialBlindfold = "50000000-0000-7000-8000-0000000000a2"
@@ -195,30 +203,81 @@ func insertBlock(t *testing.T, ctx context.Context, pool *pgxpool.Pool, gameID s
 	}
 }
 
-// getGames performs the request and decodes the body, failing on anything but a
-// 200 with a JSON content type.
+// getGames performs the unfiltered request.
 func getGames(t *testing.T, baseURL string) gamesListResponse {
 	t.Helper()
 
-	res, err := http.Get(baseURL + "/v1/games")
-	if err != nil {
-		t.Fatalf("GET /v1/games: %v", err)
-	}
-	defer res.Body.Close()
+	return getGamesFiltered(t, baseURL, "")
+}
 
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("GET /v1/games status = %d, want %d", res.StatusCode, http.StatusOK)
+// getGamesFiltered performs the request and decodes the body, failing on
+// anything but a 200 with a JSON content type.
+func getGamesFiltered(t *testing.T, baseURL, rawQuery string) gamesListResponse {
+	t.Helper()
+
+	status, contentType, raw := getGamesRaw(t, baseURL, rawQuery)
+
+	if status != http.StatusOK {
+		t.Fatalf("GET /v1/games?%s status = %d, want %d (body %s)",
+			rawQuery, status, http.StatusOK, raw)
 	}
-	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want %q", ct, "application/json")
+	if contentType != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", contentType, "application/json")
 	}
 
 	var body gamesListResponse
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("could not decode the response body: %v", err)
 	}
 
 	return body
+}
+
+// getGamesRaw returns the response untouched, so a test can assert on a status
+// the decoding helper would have failed on.
+//
+// The querystring is passed raw rather than as url.Values: the filter is about
+// repeated keys and malformed values, and Values would normalise both.
+func getGamesRaw(t *testing.T, baseURL, rawQuery string) (int, string, []byte) {
+	t.Helper()
+
+	url := baseURL + "/v1/games"
+	if rawQuery != "" {
+		url += "?" + rawQuery
+	}
+
+	res, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer res.Body.Close()
+
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("could not read the response body: %v", err)
+	}
+
+	return res.StatusCode, res.Header.Get("Content-Type"), raw
+}
+
+// assertGameIDs compares the listed ids in order, since the endpoint promises
+// newest first and a filter must not disturb that.
+func assertGameIDs(t *testing.T, body gamesListResponse, want ...string) {
+	t.Helper()
+
+	got := make([]string, len(body.Games))
+	for i, g := range body.Games {
+		got[i] = g.ID
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d games %v, want %d %v", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("games[%d].id = %s, want %s (full order %v)", i, got[i], want[i], got)
+		}
+	}
 }
 
 // TestHandleGamesListReturnsOnlyPublished is the assertion the endpoint exists
@@ -1080,4 +1139,247 @@ func keysOf(m map[string]json.RawMessage) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// seedFilterFixture writes the rows the filter tests read: three published
+// games with overlapping categories and locations, plus a draft that carries
+// every association and is the newest row, so a filter that forgot the publish
+// state would lead its list with it.
+//
+//	newer  Icebreaker, Active   Indoor
+//	third  Active               Indoor, Outdoor
+//	older  Icebreaker           Outdoor
+//	draft  Icebreaker, Active   Indoor, Outdoor
+func seedFilterFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+
+	insertCategory(t, ctx, pool, gameCategory{
+		ID:           testCategoryIcebreaker,
+		Name:         "Icebreaker",
+		Description:  "Helps a new group get talking.",
+		Active:       true,
+		DisplayOrder: 0,
+		FamilyID:     testFamilyPurpose,
+		FamilyName:   "Purpose",
+	}, 0)
+	insertCategory(t, ctx, pool, gameCategory{
+		ID:           testCategoryActive,
+		Name:         "Active",
+		Description:  "Raises the energy of the group.",
+		Active:       true,
+		DisplayOrder: 0,
+		FamilyID:     testFamilyEnergy,
+		FamilyName:   "Energy",
+	}, 1)
+
+	insertLocation(t, ctx, pool, gameLocation{ID: testLocationIndoor, Name: "Indoor"})
+	insertLocation(t, ctx, pool, gameLocation{ID: testLocationOutdoor, Name: "Outdoor"})
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	games := []struct {
+		id           string
+		title        string
+		publishState string
+		createdAt    time.Time
+		categories   []string
+		locations    []string
+	}{
+		{
+			id:           testGamePublishedOlder,
+			title:        "Circle of Words",
+			publishState: "published",
+			createdAt:    base,
+			categories:   []string{testCategoryIcebreaker},
+			locations:    []string{testLocationOutdoor},
+		},
+		{
+			id:           testGamePublishedThird,
+			title:        "Blindfold Maze",
+			publishState: "published",
+			createdAt:    base.Add(time.Hour),
+			categories:   []string{testCategoryActive},
+			locations:    []string{testLocationIndoor, testLocationOutdoor},
+		},
+		{
+			id:           testGamePublishedNewer,
+			title:        "Human Knot",
+			publishState: "published",
+			createdAt:    base.Add(2 * time.Hour),
+			categories:   []string{testCategoryIcebreaker, testCategoryActive},
+			locations:    []string{testLocationIndoor},
+		},
+		{
+			id:           testGameDraft,
+			title:        "Still a draft",
+			publishState: "draft",
+			createdAt:    base.Add(3 * time.Hour),
+			categories:   []string{testCategoryIcebreaker, testCategoryActive},
+			locations:    []string{testLocationIndoor, testLocationOutdoor},
+		},
+	}
+
+	for _, g := range games {
+		insertGame(t, ctx, pool, testGame{
+			ID:              g.id,
+			Title:           g.title,
+			Description:     "a game the filter tests read",
+			MinParticipants: ptr(int32(4)),
+			MaxParticipants: ptr(int32(12)),
+			DurationMin:     ptr(int32(10)),
+			DurationMax:     ptr(int32(20)),
+			PublishState:    g.publishState,
+			CreatedAt:       g.createdAt,
+		})
+
+		for _, c := range g.categories {
+			linkGameCategory(t, ctx, pool, g.id, c)
+		}
+		for _, l := range g.locations {
+			linkGameLocation(t, ctx, pool, g.id, l)
+		}
+	}
+}
+
+// TestHandleGamesListFiltersByCategory is the base case: only the games
+// carrying the category come back, still newest first, still without the draft.
+func TestHandleGamesListFiltersByCategory(t *testing.T) {
+	srv, pool := newTestServer(t)
+	seedFilterFixture(t, testContext(t), pool)
+
+	body := getGamesFiltered(t, srv.URL, "category="+testCategoryIcebreaker)
+
+	assertGameIDs(t, body, testGamePublishedNewer, testGamePublishedOlder)
+}
+
+// TestHandleGamesListANDsCategories is the assertion the filter rail implies:
+// two categories narrow the list rather than widening it, so the game carrying
+// only one of them drops out.
+func TestHandleGamesListANDsCategories(t *testing.T) {
+	srv, pool := newTestServer(t)
+	seedFilterFixture(t, testContext(t), pool)
+
+	body := getGamesFiltered(t, srv.URL,
+		"category="+testCategoryIcebreaker+"&category="+testCategoryActive)
+
+	assertGameIDs(t, body, testGamePublishedNewer)
+}
+
+func TestHandleGamesListFiltersByLocation(t *testing.T) {
+	srv, pool := newTestServer(t)
+	seedFilterFixture(t, testContext(t), pool)
+
+	body := getGamesFiltered(t, srv.URL, "location="+testLocationIndoor)
+
+	assertGameIDs(t, body, testGamePublishedNewer, testGamePublishedThird)
+}
+
+// TestHandleGamesListCombinesCategoryAndLocation crosses the two fields. Each
+// half alone matches two games, and only one game satisfies both.
+func TestHandleGamesListCombinesCategoryAndLocation(t *testing.T) {
+	srv, pool := newTestServer(t)
+	seedFilterFixture(t, testContext(t), pool)
+
+	body := getGamesFiltered(t, srv.URL,
+		"category="+testCategoryActive+"&location="+testLocationOutdoor)
+
+	assertGameIDs(t, body, testGamePublishedThird)
+}
+
+// TestHandleGamesListWithoutFilterIsUnchanged pins that the filter is opt-in:
+// the parameters absent, the endpoint still lists every published game.
+func TestHandleGamesListWithoutFilterIsUnchanged(t *testing.T) {
+	srv, pool := newTestServer(t)
+	seedFilterFixture(t, testContext(t), pool)
+
+	body := getGames(t, srv.URL)
+
+	assertGameIDs(t, body,
+		testGamePublishedNewer, testGamePublishedThird, testGamePublishedOlder)
+}
+
+// TestHandleGamesListDeduplicatesFilterIDs guards the match itself: it counts
+// join rows against the length of the requested array, and the join keys are
+// unique, so a repeat would push the target out of reach and match nothing.
+// The second case is the same id in the spelling pgtype also accepts, which a
+// set keyed on the raw string would miss.
+func TestHandleGamesListDeduplicatesFilterIDs(t *testing.T) {
+	srv, pool := newTestServer(t)
+	seedFilterFixture(t, testContext(t), pool)
+
+	bare := strings.ReplaceAll(testCategoryIcebreaker, "-", "")
+
+	for name, query := range map[string]string{
+		"same spelling":      "category=" + testCategoryIcebreaker + "&category=" + testCategoryIcebreaker,
+		"different spelling": "category=" + testCategoryIcebreaker + "&category=" + strings.ToUpper(bare),
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := getGamesFiltered(t, srv.URL, query)
+
+			assertGameIDs(t, body, testGamePublishedNewer, testGamePublishedOlder)
+		})
+	}
+}
+
+// TestHandleGamesListRejectsMalformedFilterID keeps a bad id from reaching
+// Postgres, which answers 22P02 for a malformed uuid; classify does not
+// recognise that code and writeStoreError would report it as a 500.
+func TestHandleGamesListRejectsMalformedFilterID(t *testing.T) {
+	srv, pool := newTestServer(t)
+	seedFilterFixture(t, testContext(t), pool)
+
+	for name, query := range map[string]string{
+		"not a uuid":        "category=nonsense",
+		"truncated":         "location=40000000-0000-7000-8000",
+		"empty value":       "category=",
+		"bad among good":    "category=" + testCategoryIcebreaker + "&category=nonsense",
+		"malformed on both": "category=nonsense&location=nonsense",
+	} {
+		t.Run(name, func(t *testing.T) {
+			status, _, raw := getGamesRaw(t, srv.URL, query)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (body %s)", status, http.StatusBadRequest, raw)
+			}
+
+			var got map[string]string
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("could not decode the response body: %v", err)
+			}
+			if got["error"] == "" {
+				t.Errorf("body = %s, want an error message", raw)
+			}
+		})
+	}
+}
+
+// TestHandleGamesListRejectsUnknownFilterID is the half a malformed-id check
+// cannot cover: the id is a valid uuid that names no row. Answering an empty
+// list would read as a library with nothing in it, so it is a 400 naming the
+// id instead.
+func TestHandleGamesListRejectsUnknownFilterID(t *testing.T) {
+	srv, pool := newTestServer(t)
+	seedFilterFixture(t, testContext(t), pool)
+
+	for name, tc := range map[string]struct{ query, wantID string }{
+		"category":         {"category=" + testCategoryMissing, testCategoryMissing},
+		"location":         {"location=" + testLocationMissing, testLocationMissing},
+		"among known ones": {"category=" + testCategoryIcebreaker + "&category=" + testCategoryMissing, testCategoryMissing},
+	} {
+		t.Run(name, func(t *testing.T) {
+			status, _, raw := getGamesRaw(t, srv.URL, tc.query)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (body %s)", status, http.StatusBadRequest, raw)
+			}
+
+			var got map[string]string
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("could not decode the response body: %v", err)
+			}
+			if !strings.Contains(got["error"], tc.wantID) {
+				t.Errorf("error = %q, want it to name %s", got["error"], tc.wantID)
+			}
+		})
+	}
 }
