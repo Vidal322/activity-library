@@ -13,7 +13,7 @@ ALTER TABLE game_materials
   ALTER COLUMN quantity_per_participant SET NOT NULL,
   DROP COLUMN quantity,
   DROP COLUMN per_participant,
-  ADD CONSTRAINT game_materials_per_participant_non_negative
+  ADD CONSTRAINT game_materials_per_participant_not_negative
     CHECK (quantity_per_participant >= 0),
   ADD CONSTRAINT game_materials_quantity_positive
     CHECK (quantity_base > 0 OR quantity_per_participant > 0);
