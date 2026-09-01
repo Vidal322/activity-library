@@ -1,11 +1,14 @@
 package api
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -26,8 +29,12 @@ type gameSummary struct {
 	NoMaterials     bool    `json:"no_materials"`
 }
 
+// gamesListResponse carries the page and the cursor that reaches the next one.
+// NextCursor is null on the last page: the client pages until it is absent
+// rather than until the list comes back shorter than the limit.
 type gamesListResponse struct {
-	Games []gameSummary `json:"games"`
+	Games      []gameSummary `json:"games"`
+	NextCursor *string       `json:"next_cursor"`
 }
 
 func newGameSummary(g store.Game) gameSummary {
@@ -199,6 +206,74 @@ func parseIntParam(values []string) (*int32, error) {
 	return &parsed, nil
 }
 
+// The cursor is opaque to the client: it is handed back the value the previous
+// response carried, and never assembles one. Base64 of the two sort-key halves
+// is enough to make that obvious and to survive a querystring intact.
+const cursorSeparator = "|"
+
+func encodeCursor(c store.GameCursor) string {
+	raw := c.CreatedAt.UTC().Format(time.RFC3339Nano) + cursorSeparator + c.ID
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// parseCursorParam reads the page marker, nil being the first page. A cursor
+// that does not decode is a bad request rather than a silent restart from the
+// top, which would repeat rows the client has already shown.
+func parseCursorParam(values []string) (*store.GameCursor, error) {
+	raw, present, err := singleValue(values)
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		return nil, nil
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, errors.New("is not a cursor this endpoint issued")
+	}
+
+	createdAt, id, found := strings.Cut(string(decoded), cursorSeparator)
+	if !found {
+		return nil, errors.New("is not a cursor this endpoint issued")
+	}
+
+	at, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return nil, errors.New("is not a cursor this endpoint issued")
+	}
+
+	var parsed pgtype.UUID
+	if err := parsed.Scan(id); err != nil {
+		return nil, errors.New("is not a cursor this endpoint issued")
+	}
+
+	return &store.GameCursor{CreatedAt: at, ID: id}, nil
+}
+
+// parseLimitParam reads the page size, zero standing for the default the store
+// applies. A limit past the ceiling is refused rather than quietly clamped, so
+// a client asking for the whole library learns that it cannot have it.
+func parseLimitParam(values []string) (int32, error) {
+	raw, present, err := singleValue(values)
+	if err != nil {
+		return 0, err
+	}
+	if !present {
+		return 0, nil
+	}
+
+	n, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%q is not a positive whole number", raw)
+	}
+	if int32(n) > store.MaxGameLimit {
+		return 0, fmt.Errorf("must not exceed %d", store.MaxGameLimit)
+	}
+
+	return int32(n), nil
+}
+
 // parseBoolParam reads one boolean filter. Absent is nil and false is a filter
 // in its own right, so the three states stay apart.
 func parseBoolParam(values []string) (*bool, error) {
@@ -259,24 +334,42 @@ func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	games, err := store.ListGames(r.Context(), s.pool, store.GameFilter{
+	limit, err := parseLimitParam(query["limit"])
+	if err != nil {
+		s.writeBadRequest(w, "limit: "+err.Error())
+		return
+	}
+
+	cursor, err := parseCursorParam(query["cursor"])
+	if err != nil {
+		s.writeBadRequest(w, "cursor: "+err.Error())
+		return
+	}
+
+	page, err := store.ListGames(r.Context(), s.pool, store.GameFilter{
 		CategoryIDs:  categoryIDs,
 		LocationIDs:  locationIDs,
 		Participants: participants,
 		Duration:     duration,
 		NoMaterials:  noMaterials,
-	})
+	}, store.GamePage{Limit: limit, Cursor: cursor})
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
 
-	summaries := make([]gameSummary, 0, len(games))
-	for _, g := range games {
+	summaries := make([]gameSummary, 0, len(page.Games))
+	for _, g := range page.Games {
 		summaries = append(summaries, newGameSummary(g))
 	}
 
-	if err := writeJSON(w, http.StatusOK, gamesListResponse{Games: summaries}); err != nil {
+	body := gamesListResponse{Games: summaries}
+	if page.Next != nil {
+		next := encodeCursor(*page.Next)
+		body.NextCursor = &next
+	}
+
+	if err := writeJSON(w, http.StatusOK, body); err != nil {
 		slog.Error("Failed to write games list response", "error", err)
 	}
 }

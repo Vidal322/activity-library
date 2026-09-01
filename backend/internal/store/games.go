@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,6 +20,10 @@ type Game struct {
 	DurationMin     *int32  `db:"duration_min"`
 	DurationMax     *int32  `db:"duration_max"`
 	NoMaterials     bool    `db:"no_materials"`
+
+	// CreatedAt is the first half of the list's sort key, and so of the
+	// cursor. It is not part of the card the client renders.
+	CreatedAt time.Time `db:"created_at"`
 }
 
 // GameFilter narrows the list. Ids within a field AND together, and the fields
@@ -40,7 +45,7 @@ const listGamesQuery = `
 	SELECT g.id, g.title, g.description, g.image,
 	       g.min_participants, g.max_participants,
 	       g.duration_min, g.duration_max,
-	       g.no_materials
+	       g.no_materials, g.created_at
 	FROM games g
 	WHERE g.publish_state = 'published'
 	  AND (
@@ -58,15 +63,66 @@ const listGamesQuery = `
 	            (g.duration_min IS NULL OR g.duration_min <= $4)
 	        AND (g.duration_max IS NULL OR g.duration_max >= $4)))
 	  AND ($5::bool IS NULL OR g.no_materials = $5)
-	ORDER BY g.created_at DESC, g.id DESC`
+	  AND ($6::timestamptz IS NULL
+	       OR (g.created_at, g.id) < ($6::timestamptz, $7::uuid))
+	ORDER BY g.created_at DESC, g.id DESC
+	LIMIT $8`
 
-// ListGames returns every published game the filter admits. Drafts are
-// invisible to this query.
-func ListGames(ctx context.Context, pool *pgxpool.Pool, filter GameFilter) ([]Game, error) {
+// GameCursor is the position of the last row a page returned
+type GameCursor struct {
+	CreatedAt time.Time
+	ID        string
+}
+
+const (
+	// DefaultGameLimit is the page size for a request that asks for none.
+	DefaultGameLimit int32 = 20
+
+	MaxGameLimit int32 = 100
+)
+
+// GamePage is where to start and how much to read. The zero value is the first
+// page at the default size.
+type GamePage struct {
+	Limit  int32
+	Cursor *GameCursor
+}
+
+// GameList is one page. Next is nil on the last page
+type GameList struct {
+	Games []Game
+	Next  *GameCursor
+}
+
+// ListGames returns one page of the published games the filter admits, newest
+// first. Drafts are invisible to this query.
+func ListGames(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	filter GameFilter,
+	page GamePage,
+) (GameList, error) {
 	if err := checkFilterIDs(ctx, pool, filter); err != nil {
-		return nil, err
+		return GameList{}, err
 	}
 
+	limit := page.Limit
+	if limit <= 0 {
+		limit = DefaultGameLimit
+	}
+	if limit > MaxGameLimit {
+		limit = MaxGameLimit
+	}
+
+	var cursorCreatedAt *time.Time
+	var cursorID *string
+	if page.Cursor != nil {
+		cursorCreatedAt = &page.Cursor.CreatedAt
+		cursorID = &page.Cursor.ID
+	}
+
+	// One row past the page, and dropped below: it answers whether a further
+	// page exists without a second count of the whole filtered set.
 	rows, err := pool.Query(
 		ctx,
 		listGamesQuery,
@@ -75,17 +131,27 @@ func ListGames(ctx context.Context, pool *pgxpool.Pool, filter GameFilter) ([]Ga
 		filter.Participants,
 		filter.Duration,
 		filter.NoMaterials,
+		cursorCreatedAt,
+		cursorID,
+		limit+1,
 	)
 	if err != nil {
-		return nil, classify(err)
+		return GameList{}, classify(err)
 	}
 
 	games, err := pgx.CollectRows(rows, pgx.RowToStructByName[Game])
 	if err != nil {
-		return nil, classify(err)
+		return GameList{}, classify(err)
 	}
 
-	return games, nil
+	var next *GameCursor
+	if int32(len(games)) > limit {
+		games = games[:limit]
+		last := games[len(games)-1]
+		next = &GameCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+
+	return GameList{Games: games, Next: next}, nil
 }
 
 // UnknownFilterError reports filter ids that name no row.
@@ -210,7 +276,7 @@ const getGameQuery = `
 	SELECT id, title, description, image,
 	       min_participants, max_participants,
 	       duration_min, duration_max,
-	       no_materials
+	       no_materials, created_at
 	FROM games
 	WHERE id = $1`
 
