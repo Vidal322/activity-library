@@ -23,10 +23,17 @@ type Game struct {
 
 // GameFilter narrows the list. Ids within a field AND together, and the fields
 // AND with each other: a game has to carry every category and every location
-// asked for. The zero value filters nothing.
+// asked for, and fit the participant count and duration on top. Participants
+// and Duration are the counsellor's own situation, not a range to overlap: a
+// game matches when its declared bounds contain the value. The zero value
+// filters nothing, and a nil scalar is one filter left off rather than a value
+// of zero or false.
 type GameFilter struct {
-	CategoryIDs []string
-	LocationIDs []string
+	CategoryIDs  []string
+	LocationIDs  []string
+	Participants *int32
+	Duration     *int32
+	NoMaterials  *bool
 }
 
 const listGamesQuery = `
@@ -44,6 +51,13 @@ const listGamesQuery = `
 	        SELECT count(*) FROM game_locations gl
 	        WHERE gl.game_id = g.id AND gl.location_id = ANY($2::uuid[])
 	      ) = coalesce(cardinality($2::uuid[]), 0)
+	  AND ($3::int IS NULL OR (
+	            (g.min_participants IS NULL OR g.min_participants <= $3)
+	        AND (g.max_participants IS NULL OR g.max_participants >= $3)))
+	  AND ($4::int IS NULL OR (
+	            (g.duration_min IS NULL OR g.duration_min <= $4)
+	        AND (g.duration_max IS NULL OR g.duration_max >= $4)))
+	  AND ($5::bool IS NULL OR g.no_materials = $5)
 	ORDER BY g.created_at DESC, g.id DESC`
 
 // ListGames returns every published game the filter admits. Drafts are
@@ -53,13 +67,19 @@ func ListGames(ctx context.Context, pool *pgxpool.Pool, filter GameFilter) ([]Ga
 		return nil, err
 	}
 
-	rows, err := pool.Query(ctx, listGamesQuery, filter.CategoryIDs, filter.LocationIDs)
+	rows, err := pool.Query(
+		ctx,
+		listGamesQuery,
+		filter.CategoryIDs,
+		filter.LocationIDs,
+		filter.Participants,
+		filter.Duration,
+		filter.NoMaterials,
+	)
 	if err != nil {
 		return nil, classify(err)
 	}
 
-	// CollectRows closes rows and surfaces any error the scan or the server
-	// raised after the first row.
 	games, err := pgx.CollectRows(rows, pgx.RowToStructByName[Game])
 	if err != nil {
 		return nil, classify(err)
@@ -68,8 +88,8 @@ func ListGames(ctx context.Context, pool *pgxpool.Pool, filter GameFilter) ([]Ga
 	return games, nil
 }
 
-// UnknownFilterError reports filter ids that name no row. Field is the query
-// parameter that carried them, so the handler can say which one to fix.
+// UnknownFilterError reports filter ids that name no row.
+// parameter that carried them
 type UnknownFilterError struct {
 	Field string
 	IDs   []string
@@ -79,9 +99,6 @@ func (e *UnknownFilterError) Error() string {
 	return "unknown " + e.Field + ": " + strings.Join(e.IDs, ", ")
 }
 
-// EXCEPT against the requested ids: what comes back is what the table does not
-// have. unnest is wrapped in a FROM so both sides of the EXCEPT are plain
-// single-column selects.
 const (
 	unknownCategoryIDsQuery = `
 		SELECT id FROM unnest($1::uuid[]) AS id

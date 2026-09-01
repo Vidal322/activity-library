@@ -1,9 +1,11 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -158,9 +160,72 @@ func parseIDParam(values []string) ([]string, error) {
 	return ids, nil
 }
 
-// handleGamesList serves GET /v1/games, filtered by repeated category and
-// location parameters. Repeats AND together, so ?category=a&category=b asks for
-// the games carrying both.
+// singleValue pulls the one value a scalar filter admits. Repeats are rejected
+// rather than resolved: the rail sets a single value per parameter, so two of
+// them means the URL is malformed, and quietly honouring one of the pair hides
+// that. The bool reports whether the parameter was there at all.
+func singleValue(values []string) (string, bool, error) {
+	switch len(values) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return values[0], true, nil
+	default:
+		return "", false, errors.New("expects a single value")
+	}
+}
+
+// parseIntParam reads one scalar filter, nil being the absent one. Zero and
+// negatives are refused along with the unparseable: the columns' CHECKs keep
+// every stored bound above zero, so such a value could only ever match nothing,
+// and an empty list reads as missing data rather than as a bad request.
+func parseIntParam(values []string) (*int32, error) {
+	raw, present, err := singleValue(values)
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		return nil, nil
+	}
+
+	// bitSize 32 makes anything the integer column could not hold an error
+	// here rather than a wrapped value further down.
+	n, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || n <= 0 {
+		return nil, fmt.Errorf("%q is not a positive whole number", raw)
+	}
+
+	parsed := int32(n)
+	return &parsed, nil
+}
+
+// parseBoolParam reads one boolean filter. Absent is nil and false is a filter
+// in its own right, so the three states stay apart.
+func parseBoolParam(values []string) (*bool, error) {
+	raw, present, err := singleValue(values)
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		return nil, nil
+	}
+
+	switch raw {
+	case "true":
+		parsed := true
+		return &parsed, nil
+	case "false":
+		parsed := false
+		return &parsed, nil
+	default:
+		return nil, fmt.Errorf("%q is not true or false", raw)
+	}
+}
+
+// handleGamesList serves GET /v1/games. The category and location parameters
+// repeat and AND together, so ?category=a&category=b asks for the games
+// carrying both. participants, duration and no_materials take a single value
+// each, and every filter given has to hold at once.
 func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
@@ -176,9 +241,30 @@ func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	participants, err := parseIntParam(query["participants"])
+	if err != nil {
+		s.writeBadRequest(w, "participants: "+err.Error())
+		return
+	}
+
+	duration, err := parseIntParam(query["duration"])
+	if err != nil {
+		s.writeBadRequest(w, "duration: "+err.Error())
+		return
+	}
+
+	noMaterials, err := parseBoolParam(query["no_materials"])
+	if err != nil {
+		s.writeBadRequest(w, "no_materials: "+err.Error())
+		return
+	}
+
 	games, err := store.ListGames(r.Context(), s.pool, store.GameFilter{
-		CategoryIDs: categoryIDs,
-		LocationIDs: locationIDs,
+		CategoryIDs:  categoryIDs,
+		LocationIDs:  locationIDs,
+		Participants: participants,
+		Duration:     duration,
+		NoMaterials:  noMaterials,
 	})
 	if err != nil {
 		s.writeStoreError(w, err)
