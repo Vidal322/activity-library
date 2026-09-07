@@ -159,3 +159,66 @@ func parseBoolParam(values []string) (*bool, error) {
 		return nil, fmt.Errorf("%q is not true or false", raw)
 	}
 }
+
+// parseTextParam reads the free-text search, nil being no search at all. A
+// value of nothing but spaces is refused rather than read as absent
+func parseTextParam(values []string) (*string, error) {
+	raw, present, err := singleValue(values)
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		return nil, nil
+	}
+
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, errors.New("must not be empty")
+	}
+
+	return &trimmed, nil
+}
+
+// A ranked search has no keyset to bookmark, so its cursor carries the row
+// count the next page starts at instead. The prefix keeps the two kinds of
+// cursor apart, so one handed to the other path is refused outright rather
+// than quietly read as a position it does not describe.
+const offsetCursorPrefix = "o"
+
+func encodeOffsetCursor(offset int32) string {
+	raw := offsetCursorPrefix + cursorSeparator + strconv.FormatInt(int64(offset), 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// parseOffsetCursor reads the search page marker, zero being the first page.
+// The ceiling is the store's: past it the database would rank and sort the
+// whole matching set only to throw away everything before the offset.
+func parseOffsetCursor(values []string) (int32, error) {
+	raw, present, err := singleValue(values)
+	if err != nil {
+		return 0, err
+	}
+	if !present {
+		return 0, nil
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return 0, errors.New("is not a cursor this endpoint issued")
+	}
+
+	prefix, count, found := strings.Cut(string(decoded), cursorSeparator)
+	if !found || prefix != offsetCursorPrefix {
+		return 0, errors.New("is not a cursor this endpoint issued")
+	}
+
+	n, err := strconv.ParseInt(count, 10, 32)
+	if err != nil || n < 0 {
+		return 0, errors.New("is not a cursor this endpoint issued")
+	}
+	if int32(n) > store.MaxGameSearchOffset {
+		return 0, fmt.Errorf("must not reach past result %d", store.MaxGameSearchOffset)
+	}
+
+	return int32(n), nil
+}

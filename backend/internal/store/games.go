@@ -26,13 +26,6 @@ type Game struct {
 	CreatedAt time.Time `db:"created_at"`
 }
 
-// GameFilter narrows the list. Ids within a field AND together, and the fields
-// AND with each other: a game has to carry every category and every location
-// asked for, and fit the participant count and duration on top. Participants
-// and Duration are the counsellor's own situation, not a range to overlap: a
-// game matches when its declared bounds contain the value. The zero value
-// filters nothing, and a nil scalar is one filter left off rather than a value
-// of zero or false.
 type GameFilter struct {
 	CategoryIDs  []string
 	LocationIDs  []string
@@ -41,13 +34,15 @@ type GameFilter struct {
 	NoMaterials  *bool
 }
 
-const listGamesQuery = `
+// gameColumns and gameFilters are shared with SearchGames in search.go, which
+// differs from the list only in how it orders rows and positions a page.
+const gameColumns = `
 	SELECT g.id, g.title, g.description, g.image,
 	       g.min_participants, g.max_participants,
 	       g.duration_min, g.duration_max,
-	       g.no_materials, g.created_at
-	FROM games g
-	WHERE g.publish_state = 'published'
+	       g.no_materials, g.created_at`
+
+const gameFilters = `
 	  AND (
 	        SELECT count(*) FROM game_categories gc
 	        WHERE gc.game_id = g.id AND gc.category_id = ANY($1::uuid[])
@@ -62,7 +57,11 @@ const listGamesQuery = `
 	  AND ($4::int IS NULL OR (
 	            (g.duration_min IS NULL OR g.duration_min <= $4)
 	        AND (g.duration_max IS NULL OR g.duration_max >= $4)))
-	  AND ($5::bool IS NULL OR g.no_materials = $5)
+	  AND ($5::bool IS NULL OR g.no_materials = $5)`
+
+const listGamesQuery = gameColumns + `
+	FROM games g
+	WHERE g.publish_state = 'published'` + gameFilters + `
 	  AND ($6::timestamptz IS NULL
 	       OR (g.created_at, g.id) < ($6::timestamptz, $7::uuid))
 	ORDER BY g.created_at DESC, g.id DESC
@@ -214,9 +213,6 @@ func unknownIDs(
 		return nil, classify(err)
 	}
 
-	// Scanned as uuid rather than string: the column is a uuid, and pgtype
-	// renders it in the canonical hyphenated form whatever spelling the client
-	// sent.
 	missing, err := pgx.CollectRows(rows, pgx.RowTo[pgtype.UUID])
 	if err != nil {
 		return nil, classify(err)

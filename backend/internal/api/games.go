@@ -140,6 +140,13 @@ func newGameDetail(g store.GameDetail) gameDetail {
 // repeat and AND together, so ?category=a&category=b asks for the games
 // carrying both. participants, duration and no_materials take a single value
 // each, and every filter given has to hold at once.
+//
+// query searches the full text of the game and narrows alongside the filters
+// rather than replacing them, since the filter rail stays live while a search
+// is running. It also changes the order: results come back best match first
+// instead of newest first, and so are paged by counting rows rather than by
+// the keyset the list walks. Both kinds of position travel in the one opaque
+// cursor the response carries.
 func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
@@ -179,34 +186,74 @@ func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cursor, err := parseCursorParam(query["cursor"])
+	q, err := parseTextParam(query["query"])
 	if err != nil {
-		s.writeBadRequest(w, "cursor: "+err.Error())
+		s.writeBadRequest(w, "query: "+err.Error())
 		return
 	}
 
-	page, err := store.ListGames(r.Context(), s.pool, store.GameFilter{
+	filter := store.GameFilter{
 		CategoryIDs:  categoryIDs,
 		LocationIDs:  locationIDs,
 		Participants: participants,
 		Duration:     duration,
 		NoMaterials:  noMaterials,
-	}, store.GamePage{Limit: limit, Cursor: cursor})
-	if err != nil {
-		s.writeStoreError(w, err)
-		return
 	}
 
-	summaries := make([]gameSummary, 0, len(page.Games))
-	for _, g := range page.Games {
+	// A search orders by relevance, which exists nowhere on disk, and so pages
+	// by counting rows; the plain list walks the keyset index. The cursor is
+	// opaque either way, so which of the two it carries is settled here and
+	// the client sees one field it hands back untouched.
+	var (
+		games      []store.Game
+		nextCursor *string
+	)
+
+	if q != nil {
+		offset, err := parseOffsetCursor(query["cursor"])
+		if err != nil {
+			s.writeBadRequest(w, "cursor: "+err.Error())
+			return
+		}
+
+		found, err := store.SearchGames(r.Context(), s.pool, *q, filter, limit, offset)
+		if err != nil {
+			s.writeStoreError(w, err)
+			return
+		}
+
+		games = found.Games
+		if found.NextOffset != nil {
+			next := encodeOffsetCursor(*found.NextOffset)
+			nextCursor = &next
+		}
+	} else {
+		cursor, err := parseCursorParam(query["cursor"])
+		if err != nil {
+			s.writeBadRequest(w, "cursor: "+err.Error())
+			return
+		}
+
+		page, err := store.ListGames(r.Context(), s.pool, filter,
+			store.GamePage{Limit: limit, Cursor: cursor})
+		if err != nil {
+			s.writeStoreError(w, err)
+			return
+		}
+
+		games = page.Games
+		if page.Next != nil {
+			next := encodeCursor(*page.Next)
+			nextCursor = &next
+		}
+	}
+
+	summaries := make([]gameSummary, 0, len(games))
+	for _, g := range games {
 		summaries = append(summaries, newGameSummary(g))
 	}
 
-	body := gamesListResponse{Games: summaries}
-	if page.Next != nil {
-		next := encodeCursor(*page.Next)
-		body.NextCursor = &next
-	}
+	body := gamesListResponse{Games: summaries, NextCursor: nextCursor}
 
 	if err := writeJSON(w, http.StatusOK, body); err != nil {
 		slog.Error("Failed to write games list response", "error", err)
