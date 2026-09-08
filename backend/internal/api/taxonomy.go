@@ -62,3 +62,34 @@ func (s *Server) handleCategoriesList(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to write categories list response", "error", err)
 	}
 }
+
+type location struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type locationsResponse struct {
+	Locations []location `json:"locations"`
+}
+
+func newLocationsResponse(locations []store.Location) locationsResponse {
+	out := make([]location, 0, len(locations))
+
+	for _, l := range locations {
+		out = append(out, location{ID: l.ID, Name: l.Name})
+	}
+
+	return locationsResponse{Locations: out}
+}
+
+func (s *Server) handleLocationsList(w http.ResponseWriter, r *http.Request) {
+	locations, err := store.ListLocations(r.Context(), s.pool)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	if err := writeJSON(w, http.StatusOK, newLocationsResponse(locations)); err != nil {
+		slog.Error("Failed to write locations list response", "error", err)
+	}
+}

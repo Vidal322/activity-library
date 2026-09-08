@@ -73,3 +73,24 @@ func ListCategories(ctx context.Context, pool *pgxpool.Pool) ([]CategoryFamily, 
 
 	return families, nil
 }
+
+// Locations are a flat, bounded list, so this returns every row rather than a
+// page. The type comes from games.go: the columns are the same two.
+const listLocationsQuery = `
+	SELECT id, name
+	FROM locations
+	ORDER BY name`
+
+func ListLocations(ctx context.Context, pool *pgxpool.Pool) ([]Location, error) {
+	rows, err := pool.Query(ctx, listLocationsQuery)
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	locations, err := pgx.CollectRows(rows, pgx.RowToStructByName[Location])
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	return locations, nil
+}
