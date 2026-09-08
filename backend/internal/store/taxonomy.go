@@ -94,3 +94,28 @@ func ListLocations(ctx context.Context, pool *pgxpool.Pool) ([]Location, error) 
 
 	return locations, nil
 }
+
+const listMaterialsQuery = `
+	SELECT id, name, description
+	FROM materials
+	ORDER BY name`
+
+type Material struct {
+	ID          string `db:"id"`
+	Name        string `db:"name"`
+	Description string `db:"description"`
+}
+
+func ListMaterials(ctx context.Context, pool *pgxpool.Pool) ([]Material, error) {
+	rows, err := pool.Query(ctx, listMaterialsQuery)
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	materials, err := pgx.CollectRows(rows, pgx.RowToStructByName[Material])
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	return materials, nil
+}

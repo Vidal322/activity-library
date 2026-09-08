@@ -93,3 +93,33 @@ func (s *Server) handleLocationsList(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to write locations list response", "error", err)
 	}
 }
+
+type material struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type materialsResponse struct {
+	Materials []material `json:"materials"`
+}
+
+func newMaterialsResponse(materials []store.Material) materialsResponse {
+	out := make([]material, 0, len(materials))
+	for _, m := range materials {
+		out = append(out, material{ID: m.ID, Name: m.Name, Description: m.Description})
+	}
+	return materialsResponse{Materials: out}
+}
+
+func (s *Server) handleMaterialsList(w http.ResponseWriter, r *http.Request) {
+	materials, err := store.ListMaterials(r.Context(), s.pool)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	if err := writeJSON(w, http.StatusOK, newMaterialsResponse(materials)); err != nil {
+		slog.Error("Failed to write materials list response", "error", err)
+	}
+}
