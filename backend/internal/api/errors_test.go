@@ -63,6 +63,36 @@ func TestStoreErrorResponse(t *testing.T) {
 			wantMsg:    "that category is still used by a game",
 		},
 		{
+			// The author pair, same design as the category one above: the
+			// name comes from game_authors now that the column is gone, and
+			// nothing fails loudly if these strings drift out of step with
+			// the schema, so they are pinned here.
+			name:       "author foreign key as bad input",
+			in:         &store.ConstraintError{Constraint: "game_authors_user_id_fkey", Sentinel: store.ErrInvalid},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantMsg:    "unknown author",
+		},
+		{
+			name:       "author foreign key as still in use",
+			in:         &store.ConstraintError{Constraint: "game_authors_user_id_fkey", Sentinel: store.ErrInUse},
+			wantStatus: http.StatusConflict,
+			wantMsg:    "that user still has games",
+		},
+		{
+			// Raised by the deferred trigger, which reports itself as a check
+			// violation under this name.
+			name:       "game without an author",
+			in:         &store.ConstraintError{Constraint: "games_author_required", Sentinel: store.ErrInvalid},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantMsg:    "a game must have at least one author",
+		},
+		{
+			name:       "duplicate author on a game",
+			in:         &store.ConstraintError{Constraint: "game_authors_pkey", Sentinel: store.ErrConflict},
+			wantStatus: http.StatusConflict,
+			wantMsg:    "that user is already an author of this game",
+		},
+		{
 			name:       "check violation names the rule",
 			in:         &store.ConstraintError{Constraint: "games_duration_range", Sentinel: store.ErrInvalid},
 			wantStatus: http.StatusUnprocessableEntity,

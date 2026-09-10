@@ -15,6 +15,7 @@ var conflictMessages = map[string]string{
 	"locations_name_key":         "a location with that name already exists",
 	"materials_name_key":         "a material with that name already exists",
 	"blocks_game_position_key":   "another block already occupies that position",
+	"game_authors_pkey":          "that user is already an author of this game",
 	"game_categories_pkey":       "that category is already on this game",
 	"game_locations_pkey":        "that location is already on this game",
 	"game_materials_pkey":        "that material is already on this game",
@@ -43,8 +44,9 @@ var invalidMessages = map[string]string{
 	"game_materials_per_participant_non_negative": "quantity per participant must not be negative",
 	"game_materials_game_no_materials_check":      "this game is marked as needing no materials",
 	"game_inspirations_not_self":                  "a game cannot inspire itself",
+	"games_author_required":                       "a game must have at least one author",
 
-	"games_author_id_fkey":                  "unknown author",
+	"game_authors_user_id_fkey":             "unknown author",
 	"games_original_not_variant_fkey":       "the original game does not exist, or is itself a variant",
 	"categories_family_id_fkey":             "unknown category family",
 	"blocks_game_id_fkey":                   "unknown game",
@@ -60,7 +62,7 @@ var invalidMessages = map[string]string{
 
 var inUseMessages = map[string]string{
 	"categories_family_id_fkey":        "that family still has categories",
-	"games_author_id_fkey":             "that user still has games",
+	"game_authors_user_id_fkey":        "that user still has games",
 	"games_original_not_variant_fkey":  "that game still has variants",
 	"game_categories_category_id_fkey": "that category is still used by a game",
 	"game_locations_location_id_fkey":  "that location is still used by a game",

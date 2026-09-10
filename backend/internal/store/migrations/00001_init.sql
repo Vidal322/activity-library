@@ -89,7 +89,6 @@ CREATE TABLE games (
     no_materials        boolean     NOT NULL DEFAULT false,
     publish_state       text        NOT NULL DEFAULT 'draft'
                                     CHECK (publish_state IN ('draft', 'published')),
-    author_id           uuid        NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
     original_id         uuid,
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),
@@ -116,7 +115,6 @@ CREATE TABLE games (
         REFERENCES games (id, is_variant)
 );
 
-CREATE INDEX games_author_idx ON games (author_id);
 CREATE INDEX games_original_idx ON games (original_id) WHERE original_id IS NOT NULL;
 CREATE INDEX games_published_keyset_idx
     ON games (created_at DESC, id DESC)
@@ -125,6 +123,61 @@ CREATE INDEX games_published_keyset_idx
 CREATE TRIGGER games_set_updated_at
     BEFORE UPDATE ON games
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE game_authors (
+    game_id    uuid        NOT NULL REFERENCES games (id) ON DELETE CASCADE,
+    user_id    uuid        NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+
+    PRIMARY KEY (game_id, user_id)
+);
+
+CREATE INDEX game_authors_user_idx ON game_authors (user_id);
+
+-- A game must always name at least one author. The check is deferred so a
+-- game and its authors can be inserted in either order within one
+-- transaction; it runs once at commit.
+-- +goose StatementBegin
+CREATE FUNCTION games_require_author() RETURNS trigger AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM game_authors WHERE game_id = NEW.id) THEN
+        RAISE EXCEPTION 'game % has no authors', NEW.id
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'games_author_required';
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+
+CREATE CONSTRAINT TRIGGER games_author_required
+    AFTER INSERT ON games
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION games_require_author();
+
+-- The same rule from the other side, covering UPDATE as well as DELETE: moving
+-- a row to another game_id empties the game it left, and no DELETE fires.
+-- Deleting the game itself cascades these rows away, so the guard on games lets
+-- that through: by commit time the game is gone and there is no invariant left
+-- to break.
+-- +goose StatementBegin
+CREATE FUNCTION game_authors_keep_last() RETURNS trigger AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM games WHERE id = OLD.game_id)
+       AND NOT EXISTS (SELECT 1 FROM game_authors WHERE game_id = OLD.game_id) THEN
+        RAISE EXCEPTION 'game % would be left without authors', OLD.game_id
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'games_author_required';
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+
+CREATE CONSTRAINT TRIGGER game_authors_keep_last
+    AFTER DELETE OR UPDATE ON game_authors
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION game_authors_keep_last();
 
 CREATE TABLE game_categories (
     game_id     uuid        NOT NULL REFERENCES games (id) ON DELETE CASCADE,
@@ -178,7 +231,7 @@ CREATE TRIGGER blocks_set_updated_at
     BEFORE UPDATE ON blocks
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- Same composite-FK pattern as games_original_not_variant_fkey in 00002:
+-- Same composite-FK pattern as games_original_not_variant_fkey:
 -- game_no_materials is pinned to false and paired with game_id, so a row here
 -- can only reference a game whose no_materials is false. 
 CREATE TABLE game_materials (
@@ -300,7 +353,10 @@ DROP TABLE blocks;
 DROP TABLE game_inspirations;
 DROP TABLE game_locations;
 DROP TABLE game_categories;
+DROP TABLE game_authors;
 DROP TABLE games;
+DROP FUNCTION game_authors_keep_last;
+DROP FUNCTION games_require_author;
 
 DROP TABLE materials;
 DROP TABLE locations;

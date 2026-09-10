@@ -86,7 +86,7 @@ type seedGame struct {
 	ID              string
 	Title           string
 	Description     string
-	AuthorID        string
+	Authors         []string
 	Image           *string
 	MinParticipants *int
 	MaxParticipants *int
@@ -176,7 +176,7 @@ var seedGames = []seedGame{
 		ID:              gameHumanKnot,
 		Title:           "Human Knot",
 		Description:     "The group tangles itself by joining hands across the circle, then untangles without letting go.",
-		AuthorID:        userAna,
+		Authors:         []string{userAna},
 		MinParticipants: ptr(6),
 		MaxParticipants: ptr(16),
 		DurationMin:     ptr(10),
@@ -216,18 +216,20 @@ var seedGames = []seedGame{
 		ID:           gameHumanKnotLarge,
 		Title:        "Human Knot: Large Group",
 		Description:  "Two knots race to untangle, then join into one.",
-		AuthorID:     userAna,
+		Authors:      []string{userAna},
 		OriginalID:   ptr(gameHumanKnot),
 		NoMaterials:  true,
 		PublishState: "published",
 		Categories:   []string{catTeamBuilding, catActive},
 		Locations:    []string{locSportsHall},
 	},
+	// Two authors, so the development data covers the case a single column
+	// could not express.
 	{
 		ID:              gameBlindfoldMaze,
 		Title:           "Blindfold Maze",
 		Description:     "Blindfolded players cross a rope maze guided only by a partner's voice.",
-		AuthorID:        userBruno,
+		Authors:         []string{userBruno, userAna},
 		MinParticipants: ptr(4),
 		MaxParticipants: ptr(20),
 		DurationMin:     ptr(20),
@@ -266,7 +268,7 @@ var seedGames = []seedGame{
 		ID:              gameCircleOfWords,
 		Title:           "Circle of Words",
 		Description:     "A closing round where each person names one word for how the day went.",
-		AuthorID:        userBruno,
+		Authors:         []string{userBruno},
 		MinParticipants: ptr(3),
 		MaxParticipants: ptr(30),
 		DurationMin:     ptr(5),

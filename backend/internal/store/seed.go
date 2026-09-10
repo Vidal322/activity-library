@@ -63,15 +63,19 @@ func Seed(ctx context.Context, pool *pgxpool.Pool) error {
 		batch.Queue(`INSERT INTO games (
 				id, title, description, image, min_participants, max_participants,
 				duration_min, duration_max, no_materials, publish_state,
-				author_id, original_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				original_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			ON CONFLICT DO NOTHING`,
 			g.ID, g.Title, g.Description, g.Image,
 			g.MinParticipants, g.MaxParticipants, g.DurationMin, g.DurationMax,
-			g.NoMaterials, g.PublishState, g.AuthorID, g.OriginalID)
+			g.NoMaterials, g.PublishState, g.OriginalID)
 	}
 
 	for _, g := range seedGames {
+		for _, authorID := range g.Authors {
+			batch.Queue(`INSERT INTO game_authors (game_id, user_id)
+				VALUES ($1, $2) ON CONFLICT DO NOTHING`, g.ID, authorID)
+		}
 		for _, categoryID := range g.Categories {
 			batch.Queue(`INSERT INTO game_categories (game_id, category_id)
 				VALUES ($1, $2) ON CONFLICT DO NOTHING`, g.ID, categoryID)

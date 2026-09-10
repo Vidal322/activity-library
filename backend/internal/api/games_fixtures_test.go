@@ -67,21 +67,40 @@ type testGame struct {
 	PublishState    string
 	OriginalID      *string
 	CreatedAt       time.Time
+
+	// Authors is optional: a game left empty gets testAuthorID, so the
+	// tests that do not care about authorship stay as they are. Name two
+	// or more to exercise the many-to-many.
+	Authors []string
 }
 
 func ptr[T any](v T) *T { return &v }
 
-// insertAuthor writes the user every game needs, since games.author_id is NOT
-// NULL with a RESTRICT reference.
+// insertAuthor writes a user for insertGame to credit. Every game needs at
+// least one: game_authors carries the link, and a deferred trigger rejects a
+// game that reaches commit without one.
 func insertAuthor(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id string) {
+	t.Helper()
+
+	insertNamedAuthor(t, ctx, pool, id, "Test Author")
+}
+
+// insertNamedAuthor is insertAuthor for the tests that assert on author order,
+// which need names that differ from each other.
+func insertNamedAuthor(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	id, name string,
+) {
 	t.Helper()
 
 	_, err := pool.Exec(ctx, `
 		INSERT INTO users (id, name, email, pass_hash)
-		VALUES ($1, 'Test Author', $2, 'not-a-real-hash')`,
-		id, id+"@example.test")
+		VALUES ($1, $2, $3, 'not-a-real-hash')`,
+		id, name, id+"@example.test")
 	if err != nil {
-		t.Fatalf("could not insert the author: %v", err)
+		t.Fatalf("could not insert the author %s: %v", name, err)
 	}
 }
 
@@ -91,17 +110,44 @@ func insertAuthor(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id stri
 func insertGame(t *testing.T, ctx context.Context, pool *pgxpool.Pool, g testGame) {
 	t.Helper()
 
-	_, err := pool.Exec(ctx, `
+	authors := g.Authors
+	if len(authors) == 0 {
+		authors = []string{testAuthorID}
+	}
+
+	// The game and its authors go in together: the trigger that requires an
+	// author is deferred to commit, so a game inserted on its own would be
+	// rejected the moment the statement's own transaction ended.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("could not begin the transaction for game %s: %v", g.Title, err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
 		INSERT INTO games (
 			id, title, description, image,
 			min_participants, max_participants, duration_min, duration_max,
-			no_materials, publish_state, author_id, original_id, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+			no_materials, publish_state, original_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		g.ID, g.Title, g.Description, g.Image,
 		g.MinParticipants, g.MaxParticipants, g.DurationMin, g.DurationMax,
-		g.NoMaterials, g.PublishState, testAuthorID, g.OriginalID, g.CreatedAt)
+		g.NoMaterials, g.PublishState, g.OriginalID, g.CreatedAt)
 	if err != nil {
 		t.Fatalf("could not insert game %s: %v", g.Title, err)
+	}
+
+	for _, authorID := range authors {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO game_authors (game_id, user_id) VALUES ($1, $2)`,
+			g.ID, authorID)
+		if err != nil {
+			t.Fatalf("could not credit %s on game %s: %v", authorID, g.Title, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("could not commit game %s: %v", g.Title, err)
 	}
 }
 
