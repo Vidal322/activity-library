@@ -345,6 +345,46 @@ func assertSummary(t *testing.T, got, want gameSummary) {
 	assertInt32Ptr(t, "max_participants", got.MaxParticipants, want.MaxParticipants)
 	assertInt32Ptr(t, "duration_min", got.DurationMin, want.DurationMin)
 	assertInt32Ptr(t, "duration_max", got.DurationMax, want.DurationMax)
+	assertAuthors(t, got.Authors, want.Authors)
+}
+
+// assertAuthors compares the credit line in order: the order is the feature,
+// so a right set in the wrong sequence is a failure.
+func assertAuthors(t *testing.T, got, want []gameAuthor) {
+	t.Helper()
+
+	if got == nil {
+		t.Errorf("authors = null, want an array")
+		return
+	}
+
+	if len(got) != len(want) {
+		t.Errorf("authors = %v, want %v", authorNames(got), authorNames(want))
+		return
+	}
+
+	for i := range want {
+		if got[i].ID != want[i].ID || got[i].Name != want[i].Name {
+			t.Errorf("authors[%d] = %s (%s), want %s (%s); full order %v",
+				i, got[i].Name, got[i].ID, want[i].Name, want[i].ID, authorNames(got))
+		}
+		assertStringPtr(t, "authors["+got[i].ID+"].img", got[i].Img, want[i].Img)
+	}
+}
+
+func authorNames(authors []gameAuthor) []string {
+	names := make([]string, len(authors))
+	for i, a := range authors {
+		names[i] = a.Name
+	}
+
+	return names
+}
+
+// testAuthors is the credit line every game gets from the plain insertAuthor
+// helper, which the card-shape tests expect to find on the wire.
+func testAuthors() []gameAuthor {
+	return []gameAuthor{{ID: testAuthorID, Name: "Test Author"}}
 }
 
 func assertStringPtr(t *testing.T, field string, got, want *string) {

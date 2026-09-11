@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -334,6 +337,138 @@ func TestGamesCanBeListedByAuthor(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("author has %d games, want %d", got, tc.want)
 			}
+		})
+	}
+}
+
+// The endpoint half of #52: the credit line has to reach the wire, on the card
+// as well as the detail page, and in alphabetical order.
+
+// insertCoWrittenGame writes a published game credited to Zé and Álvaro, in
+// that order, so the response can only come out alphabetical if something
+// sorted it.
+func insertCoWrittenGame(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	id, title string,
+	createdAt time.Time,
+) {
+	t.Helper()
+
+	insertGame(t, ctx, pool, testGame{
+		ID:              id,
+		Title:           title,
+		MinParticipants: ptr(int32(2)),
+		MaxParticipants: ptr(int32(10)),
+		DurationMin:     ptr(int32(5)),
+		DurationMax:     ptr(int32(15)),
+		PublishState:    "published",
+		CreatedAt:       createdAt,
+		Authors:         []string{testAuthorZe, testAuthorAlvaro},
+	})
+}
+
+func TestHandleGamesListReturnsAuthorsOnTheCard(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertNamedAuthor(t, ctx, pool, testAuthorZe, nameZe)
+	insertNamedAuthor(t, ctx, pool, testAuthorAlvaro, nameAlvaro)
+	insertCoWrittenGame(t, ctx, pool, testGamePublishedNewer, "Co-written",
+		time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+
+	body := getGames(t, srv.URL)
+	if len(body.Games) != 1 {
+		t.Fatalf("got %d games, want 1", len(body.Games))
+	}
+
+	assertAuthors(t, body.Games[0].Authors, []gameAuthor{
+		{ID: testAuthorAlvaro, Name: nameAlvaro},
+		{ID: testAuthorZe, Name: nameZe},
+	})
+}
+
+func TestHandleGetGameReturnsAuthors(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertNamedAuthor(t, ctx, pool, testAuthorZe, nameZe)
+	insertNamedAuthor(t, ctx, pool, testAuthorAlvaro, nameAlvaro)
+	insertCoWrittenGame(t, ctx, pool, testGamePublishedNewer, "Co-written",
+		time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+
+	status, raw := getGame(t, srv.URL, testGamePublishedNewer)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, raw)
+	}
+
+	var got gameDetail
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+
+	assertAuthors(t, got.Authors, []gameAuthor{
+		{ID: testAuthorAlvaro, Name: nameAlvaro},
+		{ID: testAuthorZe, Name: nameZe},
+	})
+}
+
+// Search reaches the store by its own function, so the credit line can be
+// present on the list and missing here.
+func TestHandleGamesSearchReturnsAuthors(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertNamedAuthor(t, ctx, pool, testAuthorZe, nameZe)
+	insertNamedAuthor(t, ctx, pool, testAuthorAlvaro, nameAlvaro)
+	insertCoWrittenGame(t, ctx, pool, testGamePublishedNewer, "Caça ao Tesouro",
+		time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+
+	body := getGamesFiltered(t, srv.URL, "query=tesouro")
+	if len(body.Games) != 1 {
+		t.Fatalf("got %d results, want 1", len(body.Games))
+	}
+
+	assertAuthors(t, body.Games[0].Authors, []gameAuthor{
+		{ID: testAuthorAlvaro, Name: nameAlvaro},
+		{ID: testAuthorZe, Name: nameZe},
+	})
+}
+
+// The trap a JOIN into listGamesQuery would spring: LIMIT counts rows, so a
+// co-written game would consume two slots of the page and the client would get
+// fewer games than it asked for. Every game here has two authors, so a page of
+// two must still be two games.
+func TestHandleGamesListPagesGamesNotAuthorRows(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	insertNamedAuthor(t, ctx, pool, testAuthorZe, nameZe)
+	insertNamedAuthor(t, ctx, pool, testAuthorAlvaro, nameAlvaro)
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	ids := []string{testGamePublishedNewer, testGamePublishedOlder, testGamePublishedThird}
+	for i, id := range ids {
+		insertCoWrittenGame(t, ctx, pool, id, "Co-written", base.Add(time.Duration(i)*time.Hour))
+	}
+
+	body := getGamesFiltered(t, srv.URL, "limit=2")
+
+	// Distinct ids, newest first. Length alone is not enough: a join returns
+	// the same game once per author, so a page of two rows can be one game
+	// twice and still be the right length.
+	assertGameIDs(t, body, testGamePublishedThird, testGamePublishedOlder)
+
+	// A third game is still waiting, so the page must offer a way to it.
+	if body.NextCursor == nil {
+		t.Error("next_cursor is null, want a cursor: a third game is unread")
+	}
+
+	for _, g := range body.Games {
+		assertAuthors(t, g.Authors, []gameAuthor{
+			{ID: testAuthorAlvaro, Name: nameAlvaro},
+			{ID: testAuthorZe, Name: nameZe},
 		})
 	}
 }

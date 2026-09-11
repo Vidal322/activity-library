@@ -24,6 +24,14 @@ type Game struct {
 	// CreatedAt is the first half of the list's sort key, and so of the
 	// cursor. It is not part of the card the client renders.
 	CreatedAt time.Time `db:"created_at"`
+	// Field not in db, the tag warns pgx about it
+	Authors []GameAuthor `db:"-"`
+}
+
+type GameAuthor struct {
+	ID   string  `db:"id"`
+	Name string  `db:"name"`
+	Img  *string `db:"img"`
 }
 
 type GameFilter struct {
@@ -66,6 +74,70 @@ const listGamesQuery = gameColumns + `
 	       OR (g.created_at, g.id) < ($6::timestamptz, $7::uuid))
 	ORDER BY g.created_at DESC, g.id DESC
 	LIMIT $8`
+
+const gameAuthorsQuery = `
+	SELECT ga.game_id, u.id, u.name, u.img
+	FROM game_authors ga
+	JOIN users u ON u.id = ga.user_id
+	WHERE ga.game_id = ANY($1::uuid[])
+	ORDER BY ga.game_id, u.name COLLATE "pt-PT-x-icu", u.id`
+
+func authorsByGame(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameIDs []string,
+) (map[string][]GameAuthor, error) {
+	byGame := make(map[string][]GameAuthor, len(gameIDs))
+	for _, id := range gameIDs {
+		byGame[id] = []GameAuthor{}
+	}
+
+	if len(gameIDs) == 0 {
+		return byGame, nil
+	}
+
+	rows, err := pool.Query(ctx, gameAuthorsQuery, gameIDs)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var gameID string
+		var a GameAuthor
+		if err := rows.Scan(&gameID, &a.ID, &a.Name, &a.Img); err != nil {
+			return nil, classify(err)
+		}
+		byGame[gameID] = append(byGame[gameID], a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, classify(err)
+	}
+
+	return byGame, nil
+}
+
+func attachAuthors(ctx context.Context, pool *pgxpool.Pool, games []Game) error {
+	if len(games) == 0 {
+		return nil
+	}
+
+	ids := make([]string, len(games))
+	for i, g := range games {
+		ids[i] = g.ID
+	}
+
+	byGame, err := authorsByGame(ctx, pool, ids)
+	if err != nil {
+		return err
+	}
+
+	for i := range games {
+		games[i].Authors = byGame[games[i].ID]
+	}
+
+	return nil
+}
 
 // GameCursor is the position of the last row a page returned
 type GameCursor struct {
@@ -148,6 +220,11 @@ func ListGames(
 		games = games[:limit]
 		last := games[len(games)-1]
 		next = &GameCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+
+	// After the page is trimmed, so the probe row past the end costs nothing.
+	if err := attachAuthors(ctx, pool, games); err != nil {
+		return GameList{}, err
 	}
 
 	return GameList{Games: games, Next: next}, nil
@@ -318,6 +395,12 @@ func GetGameByID(ctx context.Context, pool *pgxpool.Pool, gameId string) (GameDe
 	if err != nil {
 		return GameDetail{}, classify(err)
 	}
+
+	byGame, err := authorsByGame(ctx, pool, []string{game.ID})
+	if err != nil {
+		return GameDetail{}, err
+	}
+	game.Authors = byGame[game.ID]
 
 	categories, err := collectByGame[GameCategory](ctx, pool, getGameCategoriesQuery, gameId)
 	if err != nil {

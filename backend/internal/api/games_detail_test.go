@@ -48,6 +48,7 @@ func TestHandleGetGameReturnsTheRow(t *testing.T) {
 		DurationMin:     ptr(int32(10)),
 		DurationMax:     ptr(int32(15)),
 		NoMaterials:     true,
+		Authors:         testAuthors(),
 	}
 
 	// A second row the request must not return, so a query that ignores its
@@ -129,8 +130,9 @@ func TestHandleGetGameKeepsVariantNullsNull(t *testing.T) {
 	}
 
 	assertSummary(t, got, gameSummary{
-		ID:    testGameVariant,
-		Title: "A variant with nothing of its own",
+		ID:      testGameVariant,
+		Title:   "A variant with nothing of its own",
+		Authors: testAuthors(),
 	})
 }
 

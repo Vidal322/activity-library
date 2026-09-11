@@ -10,17 +10,23 @@ import (
 	"github.com/Vidal322/activity-library/internal/store"
 )
 
-// gameSummary is the card the library grid renders
+type gameAuthor struct {
+	ID   string  `json:"id"`
+	Name string  `json:"name"`
+	Img  *string `json:"img"`
+}
+
 type gameSummary struct {
-	ID              string  `json:"id"`
-	Title           string  `json:"title"`
-	Description     string  `json:"description"`
-	Image           *string `json:"image"`
-	MinParticipants *int32  `json:"min_participants"`
-	MaxParticipants *int32  `json:"max_participants"`
-	DurationMin     *int32  `json:"duration_min"`
-	DurationMax     *int32  `json:"duration_max"`
-	NoMaterials     bool    `json:"no_materials"`
+	ID              string       `json:"id"`
+	Title           string       `json:"title"`
+	Description     string       `json:"description"`
+	Image           *string      `json:"image"`
+	MinParticipants *int32       `json:"min_participants"`
+	MaxParticipants *int32       `json:"max_participants"`
+	DurationMin     *int32       `json:"duration_min"`
+	DurationMax     *int32       `json:"duration_max"`
+	NoMaterials     bool         `json:"no_materials"`
+	Authors         []gameAuthor `json:"authors"`
 }
 
 // gamesListResponse carries the page and the cursor that reaches the next one.
@@ -32,6 +38,11 @@ type gamesListResponse struct {
 }
 
 func newGameSummary(g store.Game) gameSummary {
+	authors := make([]gameAuthor, 0, len(g.Authors))
+	for _, a := range g.Authors {
+		authors = append(authors, gameAuthor{ID: a.ID, Name: a.Name, Img: a.Img})
+	}
+
 	return gameSummary{
 		ID:              g.ID,
 		Title:           g.Title,
@@ -42,11 +53,10 @@ func newGameSummary(g store.Game) gameSummary {
 		DurationMin:     g.DurationMin,
 		DurationMax:     g.DurationMax,
 		NoMaterials:     g.NoMaterials,
+		Authors:         authors,
 	}
 }
 
-// gameCategory carries its family alongside the category, so the detail page
-// can group the badges without resolving families itself.
 type gameCategory struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -200,10 +210,6 @@ func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 		NoMaterials:  noMaterials,
 	}
 
-	// A search orders by relevance, which exists nowhere on disk, and so pages
-	// by counting rows; the plain list walks the keyset index. The cursor is
-	// opaque either way, so which of the two it carries is settled here and
-	// the client sees one field it hands back untouched.
 	var (
 		games      []store.Game
 		nextCursor *string

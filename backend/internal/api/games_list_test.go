@@ -91,6 +91,7 @@ func TestHandleGamesListMapsCardFields(t *testing.T) {
 		DurationMin:     ptr(int32(10)),
 		DurationMax:     ptr(int32(15)),
 		NoMaterials:     true,
+		Authors:         testAuthors(),
 	}
 
 	insertGame(t, ctx, pool, testGame{
@@ -150,8 +151,9 @@ func TestHandleGamesListKeepsVariantNullsNull(t *testing.T) {
 	}
 
 	assertSummary(t, body.Games[0], gameSummary{
-		ID:    testGameVariant,
-		Title: "A variant with nothing of its own",
+		ID:      testGameVariant,
+		Title:   "A variant with nothing of its own",
+		Authors: testAuthors(),
 	})
 }
 

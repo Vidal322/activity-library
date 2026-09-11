@@ -80,5 +80,11 @@ func SearchGames(
 		}
 	}
 
+	// As in ListGames: after the trim, so the probe row past the end costs
+	// nothing.
+	if err := attachAuthors(ctx, pool, games); err != nil {
+		return GameSearch{}, err
+	}
+
 	return GameSearch{Games: games, NextOffset: next}, nil
 }
