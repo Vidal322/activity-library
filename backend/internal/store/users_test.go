@@ -283,3 +283,177 @@ func TestGetUserByEmailNotFound(t *testing.T) {
 		t.Fatalf("error = %v, want store.ErrNotFound", err)
 	}
 }
+
+// The tests below cover store.CreateUser, the write behind registration.
+
+// TestCreateUserReturnsTheStoredRow pins what the caller gets back. The INSERT
+// returns the row rather than just an id so the handler can answer without a
+// second query, which only works if RETURNING keeps naming every column the
+// struct has.
+func TestCreateUserReturnsTheStoredRow(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	img := "https://example.test/ana.png"
+
+	user, err := store.CreateUser(ctx, pool, "Ana Marques", "ana@example.test", "not-a-real-hash", &img)
+	if err != nil {
+		t.Fatalf("could not create an account: %v", err)
+	}
+
+	if user.ID == "" {
+		t.Error("ID is empty, want the uuid the column defaulted to")
+	}
+	if user.Name != "Ana Marques" {
+		t.Errorf("Name = %q, want %q", user.Name, "Ana Marques")
+	}
+	if user.Email != "ana@example.test" {
+		t.Errorf("Email = %q, want %q", user.Email, "ana@example.test")
+	}
+	if user.PassHash != "not-a-real-hash" {
+		t.Errorf("PassHash = %q, want %q", user.PassHash, "not-a-real-hash")
+	}
+	if user.Img == nil {
+		t.Errorf("Img = nil, want %q", img)
+	} else if *user.Img != img {
+		t.Errorf("Img = %q, want %q", *user.Img, img)
+	}
+	if user.CreatedAt.IsZero() {
+		t.Error("CreatedAt is the zero time, want the value the column defaulted to")
+	}
+
+	// The row the caller was handed has to be the row that landed, not a
+	// struct assembled from the arguments.
+	stored, err := store.GetUserByID(ctx, pool, user.ID)
+	if err != nil {
+		t.Fatalf("could not read the new account back: %v", err)
+	}
+	if stored.Email != user.Email {
+		t.Errorf("stored Email = %q, want %q", stored.Email, user.Email)
+	}
+}
+
+// TestCreateUserTakesTheColumnDefaults is a privilege check standing in a test
+// file. createUserQuery names neither role nor active, so a registration cannot
+// choose its own standing however the request is shaped: the account arrives as
+// an outsider and the schema decides, not the caller.
+func TestCreateUserTakesTheColumnDefaults(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	user, err := store.CreateUser(ctx, pool, "Ana Marques", "ana@example.test", "not-a-real-hash", nil)
+	if err != nil {
+		t.Fatalf("could not create an account: %v", err)
+	}
+
+	if user.Role != "outsider" {
+		t.Errorf("Role = %q, want %q", user.Role, "outsider")
+	}
+	if !user.Active {
+		t.Error("Active = false, want true")
+	}
+}
+
+// TestCreateUserAcceptsNoImg covers the nullable column on the way in: most
+// registrations carry no picture.
+func TestCreateUserAcceptsNoImg(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	user, err := store.CreateUser(ctx, pool, "Bruno Costa", "bruno@example.test", "not-a-real-hash", nil)
+	if err != nil {
+		t.Fatalf("could not create an account without a picture: %v", err)
+	}
+
+	if user.Img != nil {
+		t.Errorf("Img = %q, want nil", *user.Img)
+	}
+}
+
+// TestCreateUserRejectsADuplicateEmail is the ErrConflict half of issue #25.
+// The sentinel is what the handler keys on for its 409, and the constraint name
+// rides along inside ConstraintError so writeStoreError can name the field that
+// collided rather than saying something already exists.
+func TestCreateUserRejectsADuplicateEmail(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	if _, err := store.CreateUser(ctx, pool, "Ana Marques", "ana@example.test", "not-a-real-hash", nil); err != nil {
+		t.Fatalf("could not create the first account: %v", err)
+	}
+
+	_, err := store.CreateUser(ctx, pool, "Ana Again", "ana@example.test", "not-a-real-hash", nil)
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("error = %v, want store.ErrConflict", err)
+	}
+
+	var ce *store.ConstraintError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is not a ConstraintError: %v", err)
+	}
+	if ce.Constraint != "users_email_key" {
+		t.Errorf("Constraint = %q, want %q", ce.Constraint, "users_email_key")
+	}
+}
+
+// TestCreateUserFoldsCaseOnTheDuplicate is the same conflict arriving in a
+// different case. users_email_key is on lower(email), so this is the database's
+// guarantee rather than the query's, and it has to hold for the store too: two
+// people cannot hold one address by capitalising it differently.
+func TestCreateUserFoldsCaseOnTheDuplicate(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	if _, err := store.CreateUser(ctx, pool, "Ana Marques", "ana@example.test", "not-a-real-hash", nil); err != nil {
+		t.Fatalf("could not create the first account: %v", err)
+	}
+
+	_, err := store.CreateUser(ctx, pool, "Ana Again", "ANA@Example.TEST", "not-a-real-hash", nil)
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("error = %v, want store.ErrConflict", err)
+	}
+}
+
+// TestCreateUserReusesADeletedEmail is the partial index seen from the write
+// side, and the reason the conflict above is not simply unique. Deletion is
+// final and coming back means a new account, so a deleted account releases its
+// address: without WHERE active on the index this registration would collide
+// with a row nobody can log into.
+func TestCreateUserReusesADeletedEmail(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	first, err := store.CreateUser(ctx, pool, "Ana Marques", "ana@example.test", "not-a-real-hash", nil)
+	if err != nil {
+		t.Fatalf("could not create the first account: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE users SET active = false WHERE id = $1`, first.ID); err != nil {
+		t.Fatalf("could not delete the first account: %v", err)
+	}
+
+	second, err := store.CreateUser(ctx, pool, "Ana Marques", "ana@example.test", "not-a-real-hash", nil)
+	if err != nil {
+		t.Fatalf("a deleted account still holds its address, want it released: %v", err)
+	}
+
+	if second.ID == first.ID {
+		t.Error("the new account reused the deleted account's id, want a new row")
+	}
+}
+
+// TestCreateUserRejectsEmptyFields pins the check constraints reaching the
+// caller as ErrInvalid. The handler validates before it ever gets here, so this
+// is the guarantee for anything that does not: a future seeder, an import, a
+// second handler written in a hurry.
+func TestCreateUserRejectsEmptyFields(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	for _, tc := range []struct {
+		label, name, email string
+	}{
+		{"empty name", "", "ana@example.test"},
+		{"empty email", "Ana Marques", ""},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			_, err := store.CreateUser(ctx, pool, tc.name, tc.email, "not-a-real-hash", nil)
+			if !errors.Is(err, store.ErrInvalid) {
+				t.Fatalf("error = %v, want store.ErrInvalid", err)
+			}
+		})
+	}
+}

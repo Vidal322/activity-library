@@ -121,3 +121,16 @@ func (s *Server) writeBadRequest(w http.ResponseWriter, msg string) {
 		slog.Error("Failed to write bad request response", "error", err)
 	}
 }
+
+// writeUnprocessable is for a body that parsed but carries values the model
+// will not accept. The split from writeBadRequest matters because the two
+// answer different questions: 400 says the request could not be read, 422 says
+// it was read and refused. storeErrorResponse already returns 422 for
+// ErrInvalid, which is the same refusal arriving from a check constraint
+// instead of from a handler, so validation that runs before the query has to
+// agree with it or the status would depend on which layer noticed first.
+func (s *Server) writeUnprocessable(w http.ResponseWriter, msg string) {
+	if err := writeErrorJSON(w, http.StatusUnprocessableEntity, msg); err != nil {
+		slog.Error("Failed to write unprocessable entity response", "error", err)
+	}
+}

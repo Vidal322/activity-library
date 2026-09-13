@@ -111,7 +111,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	req.Email = strings.TrimSpace(req.Email)
 
 	if msg := req.validate(); msg != "" {
-		s.writeBadRequest(w, msg)
+		s.writeUnprocessable(w, msg)
 		return
 	}
 
