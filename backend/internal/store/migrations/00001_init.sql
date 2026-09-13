@@ -15,11 +15,14 @@ CREATE TABLE users (
     email      text        NOT NULL CHECK (email <> ''),
     pass_hash  text        NOT NULL,
     img        text,
+    role text NOT NULL DEFAULT 'outsider'
+                  CHECK (role in ('outsider', 'admin', 'member')),
+    active boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX users_email_key ON users (lower(email));
+CREATE UNIQUE INDEX users_email_key ON users (lower(email)) WHERE active;
 
 CREATE TRIGGER users_set_updated_at
     BEFORE UPDATE ON users
