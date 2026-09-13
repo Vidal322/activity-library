@@ -28,6 +28,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/categories", s.handleCategoriesList)
 		r.Get("/locations", s.handleLocationsList)
 		r.Get("/materials", s.handleMaterialsList)
+		r.Get("/users/{id}", s.handleGetUser)
 	})
 
 	return r
