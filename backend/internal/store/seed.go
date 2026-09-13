@@ -28,9 +28,9 @@ func Seed(ctx context.Context, pool *pgxpool.Pool) error {
 	batch := &pgx.Batch{}
 
 	for _, u := range seedUsers {
-		batch.Queue(`INSERT INTO users (id, name, email, pass_hash, img)
-			VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-			u.ID, u.Name, u.Email, seedPassHash, u.Img)
+		batch.Queue(`INSERT INTO users (id, name, email, pass_hash, img, role)
+			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+			u.ID, u.Name, u.Email, seedPassHash, u.Img, u.Role)
 	}
 
 	for _, f := range seedFamilies {

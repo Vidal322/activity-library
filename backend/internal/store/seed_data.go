@@ -40,6 +40,10 @@ type seedUser struct {
 	Name  string
 	Email string
 	Img   *string
+	// Role is spelled out for every seed user rather than left to the column
+	// default. The default is 'outsider', which sees no games, so a seeded
+	// database with no roles set would come up empty the day auth lands.
+	Role string
 }
 
 type seedFamily struct {
@@ -105,9 +109,12 @@ type seedGame struct {
 
 func ptr[T any](v T) *T { return &v }
 
+// One admin and one member: the development dataset needs an admin to exercise
+// the door (inviting, promoting, removing) and a plain member to be on the other
+// side of it.
 var seedUsers = []seedUser{
-	{ID: userAna, Name: "Ana Marques", Email: "ana@example.com"},
-	{ID: userBruno, Name: "Bruno Costa", Email: "bruno@example.com"},
+	{ID: userAna, Name: "Ana Marques", Email: "ana@example.com", Role: "admin"},
+	{ID: userBruno, Name: "Bruno Costa", Email: "bruno@example.com", Role: "member"},
 }
 
 var seedFamilies = []seedFamily{
