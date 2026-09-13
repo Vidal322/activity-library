@@ -174,3 +174,112 @@ func TestGetUserByIDRejectsAMalformedID(t *testing.T) {
 		t.Fatal("a malformed id was accepted, want an error")
 	}
 }
+
+// The tests below cover store.GetUserByEmail, the lookup login is built on. It
+// differs from GetUserByID in two ways that are easy to lose in a copy-paste,
+// and each has a test here: it folds case, and it refuses deleted accounts.
+
+// TestGetUserByEmailFoldsCase is the assertion issue #25 names. users_email_key
+// is on lower(email), so a lookup that compares the column directly disagrees
+// with the index that enforced uniqueness in the first place: the address that
+// was refused at signup as a duplicate would be unfindable at login.
+func TestGetUserByEmailFoldsCase(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	id := insertUser(t, pool, ctx, "Ana Marques", "Ana.Marques@Example.test", "member", nil)
+
+	for _, typed := range []string{
+		"Ana.Marques@Example.test",
+		"ana.marques@example.test",
+		"ANA.MARQUES@EXAMPLE.TEST",
+		"aNa.MaRqUeS@eXaMpLe.TeSt",
+	} {
+		user, err := store.GetUserByEmail(ctx, pool, typed)
+		if err != nil {
+			t.Errorf("looking up %q: %v", typed, err)
+			continue
+		}
+		if user.ID != id {
+			t.Errorf("looking up %q: ID = %q, want %q", typed, user.ID, id)
+		}
+	}
+}
+
+// TestGetUserByEmailReturnsThePassHash pins the reason this lookup exists.
+// Verifying the hash is the caller's whole purpose, so a query that stopped
+// selecting the column would break login while every other field still read
+// correctly.
+func TestGetUserByEmailReturnsThePassHash(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "member", nil)
+
+	user, err := store.GetUserByEmail(ctx, pool, "ana@example.test")
+	if err != nil {
+		t.Fatalf("could not read the account back: %v", err)
+	}
+
+	if user.PassHash != "not-a-real-hash" {
+		t.Errorf("PassHash = %q, want %q", user.PassHash, "not-a-real-hash")
+	}
+}
+
+// TestGetUserByEmailIgnoresDeletedAccounts is the AND active clause, and the
+// one place the two lookups deliberately disagree: GetUserByID still returns a
+// deleted account, this one must not. Without the clause a deactivated person
+// could still sign in, which is the entire meaning of deactivating them.
+func TestGetUserByEmailIgnoresDeletedAccounts(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	id := insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "member", nil)
+
+	if _, err := pool.Exec(ctx, `UPDATE users SET active = false WHERE id = $1`, id); err != nil {
+		t.Fatalf("could not delete the account: %v", err)
+	}
+
+	_, err := store.GetUserByEmail(ctx, pool, "ana@example.test")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("error = %v, want store.ErrNotFound", err)
+	}
+}
+
+// TestGetUserByEmailFindsTheLiveAccount is the case the partial index creates
+// and the one most likely to break in production rather than in a fixture.
+// users_email_key is partial on active, so a deleted account keeps its address
+// and the person can register again: the table then holds two rows for one
+// email, and only the live one may be returned. A lookup missing AND active
+// would match both and CollectExactlyOneRow would fail with ErrTooManyRows,
+// which classify does not map, so login would 500 rather than 401.
+func TestGetUserByEmailFindsTheLiveAccount(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	old := insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "member", nil)
+	if _, err := pool.Exec(ctx, `UPDATE users SET active = false WHERE id = $1`, old); err != nil {
+		t.Fatalf("could not delete the first account: %v", err)
+	}
+
+	current := insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "outsider", nil)
+
+	user, err := store.GetUserByEmail(ctx, pool, "ana@example.test")
+	if err != nil {
+		t.Fatalf("could not read the live account back: %v", err)
+	}
+
+	if user.ID != current {
+		t.Errorf("ID = %q, want the live account %q", user.ID, current)
+	}
+}
+
+// TestGetUserByEmailNotFound pins the mapping login's 401 depends on: an
+// address nobody registered has to arrive as ErrNotFound, not as a raw error
+// the handler would turn into a 500.
+func TestGetUserByEmailNotFound(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "member", nil)
+
+	_, err := store.GetUserByEmail(ctx, pool, "bruno@example.test")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("error = %v, want store.ErrNotFound", err)
+	}
+}
