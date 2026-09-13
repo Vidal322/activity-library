@@ -59,3 +59,30 @@ func GetUserByEmail(ctx context.Context, pool *pgxpool.Pool, email string) (User
 
 	return user, nil
 }
+
+const createUserQuery = `
+      INSERT INTO users (name, email, pass_hash, img)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, name, email, pass_hash, img, role, active, created_at, updated_at
+`
+
+func CreateUser(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	name string,
+	email string,
+	passHash string,
+	img *string,
+) (User, error) {
+	rows, err := pool.Query(ctx, createUserQuery, name, email, passHash, img)
+	if err != nil {
+		return User{}, classify(err)
+	}
+
+	user, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[User])
+	if err != nil {
+		return User{}, classify(err)
+	}
+
+	return user, nil
+}
