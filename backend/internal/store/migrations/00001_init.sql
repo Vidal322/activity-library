@@ -28,6 +28,18 @@ CREATE TRIGGER users_set_updated_at
     BEFORE UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE TABLE sessions (
+    token_hash text        PRIMARY KEY CHECK (token_hash <> ''),
+    user_id    uuid        NOT NULL REFERENCES users ON DELETE CASCADE,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    revoked_at timestamptz
+);
+
+CREATE INDEX sessions_expires_at ON sessions (expires_at);
+
+CREATE INDEX sessions_user_id ON sessions (user_id);
+
 CREATE TABLE category_families (
     id            uuid        PRIMARY KEY DEFAULT uuidv7(),
     name          text        NOT NULL UNIQUE CHECK (name <> ''),
@@ -365,5 +377,6 @@ DROP TABLE materials;
 DROP TABLE locations;
 DROP TABLE categories;
 DROP TABLE category_families;
+DROP TABLE sessions;
 DROP TABLE users;
 DROP FUNCTION set_updated_at;
