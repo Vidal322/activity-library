@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -100,6 +101,53 @@ func Verify(password, encoded string) (bool, error) {
 	// many leading bytes matched, which is enough to walk a forged hash towards
 	// a real one.
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
+}
+
+// dummyPassword and dummySalt build the hash VerifyDummy verifies against.
+// Neither is a secret: this hash guards no account, and the only property it
+// needs is being a well-formed argon2id string at the current cost.
+const dummyPassword = "a password no account holds"
+
+var dummySalt = [saltLength]byte{
+	0x64, 0x75, 0x6d, 0x6d, 0x79, 0x20, 0x73, 0x61,
+	0x6c, 0x74, 0x20, 0x31, 0x36, 0x20, 0x62, 0x79,
+}
+
+// dummyHash derives that hash once and holds it for the life of the process.
+// Once, because deriving it per call would double the argon2 work on the path
+// that is meant to match a single Verify, and land the unknown-email case at
+// twice the real one's cost rather than the same. Lazily, because a package
+// that is linked in but never reaches a failed login should not pay 64 MiB at
+// init.
+//
+// It is built from the package constants rather than written out as a literal
+// so that raising the cost moves this hash with it. A frozen literal would go
+// on verifying at the old cost and reopen the gap it exists to close.
+var dummyHash = sync.OnceValue(func() string {
+	key := argon2.IDKey([]byte(dummyPassword), dummySalt[:], hashTime, hashMemory, hashParallelism, keyLength)
+	return encode(dummySalt[:], key, hashMemory, hashTime, hashParallelism)
+})
+
+// VerifyDummy spends what Verify spends, against a hash belonging to no one.
+// Login calls it when the email matches no user, so that the response time of
+// an unknown email matches the response time of a wrong password.
+//
+// Without it the two are trivially separable: argon2id is deliberately slow, so
+// a 401 that skipped it returns in a millisecond and a 401 that ran it takes
+// closer to a hundred. Returning an identical body and status for both, and
+// then letting a stopwatch tell them apart, is the same user enumeration in a
+// slower form.
+//
+// It routes through Verify rather than calling argon2.IDKey directly so that
+// decode is on the clock too, and it returns nothing: the outcome is always
+// false, and a caller with a value in hand is a caller that might branch on it.
+//
+// This closes the timing gap that a single request measures. It does not make
+// login constant-time — the query that missed still differs from the one that
+// hit — and nothing here should be read as a proof against an attacker patient
+// enough to average away the noise.
+func VerifyDummy(password string) {
+	_, _ = Verify(password, dummyHash())
 }
 
 // b64 is the encoding the reference implementation uses, and with it every

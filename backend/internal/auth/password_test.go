@@ -201,3 +201,51 @@ func TestVerifyErrorsDoNotLeakSecrets(t *testing.T) {
 		}
 	}
 }
+
+// The dummy hash cannot be tested for the property it actually exists for —
+// that a failed login costs the same whether or not the email matched — because
+// asserting on elapsed time is a flake waiting to happen on a shared runner.
+//
+// What these pin instead is the thing that would silently take that property
+// away: the hash has to parse. Verify returns before argon2.IDKey on a string
+// it cannot decode, so a malformed dummy makes VerifyDummy return in
+// microseconds while still looking like it is doing the work. The call site
+// discards the result, so nothing downstream would notice.
+//
+// VerifyDummy itself is dummyHash plus Verify, both covered here and neither
+// observable from outside, so there is nothing left for a test of the wrapper
+// to assert.
+
+func TestDummyHashIsVerifiable(t *testing.T) {
+	ok, err := Verify(testPassword, dummyHash())
+	if err != nil {
+		t.Fatalf("Verify() against the dummy hash returned an error, so no argon2 work ran: %v", err)
+	}
+	if ok {
+		t.Error("Verify() against the dummy hash = true, want false")
+	}
+}
+
+// TestDummyHashMatchesHashParameters compares against a real Hash rather than a
+// literal prefix, so that raising the cost constants keeps the two in step
+// instead of failing here.
+func TestDummyHashMatchesHashParameters(t *testing.T) {
+	params := func(encoded string) string {
+		fields := strings.Split(encoded, "$")
+		if len(fields) != 6 {
+			t.Fatalf("%q split on $ gave %d fields, want 6", encoded, len(fields))
+		}
+		// Everything up to the salt: variant, version and cost.
+		return strings.Join(fields[:4], "$")
+	}
+
+	if got, want := params(dummyHash()), params(mustHash(t, testPassword)); got != want {
+		t.Errorf("the dummy hash carries %q, but Hash writes %q — the unknown-email path would cost less than the real one", got, want)
+	}
+}
+
+func TestDummyHashIsDerivedOnce(t *testing.T) {
+	if dummyHash() != dummyHash() {
+		t.Error("dummyHash() returned two different values, want one derivation reused")
+	}
+}
