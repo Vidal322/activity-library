@@ -2,19 +2,26 @@ package config
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 )
 
 type Config struct {
-	Addr string   `env:"ADDR" envDefault:":8080"`
-	DB   DBConfig `                              envPrefix:"DB_"`
+	Addr    string        `env:"ADDR" envDefault:":8080"`
+	DB      DBConfig      `                              envPrefix:"DB_"`
+	Session SessionConfig `                              envPrefix:"SESSION_"`
 }
 
 type DBConfig struct {
 	DSN      string `env:"DSN,required"`
 	MaxConns int32  `env:"MAX_CONNS"    envDefault:"25"`
 	MinConns int32  `env:"MIN_CONNS"    envDefault:"5"`
+}
+
+type SessionConfig struct {
+	TTL          time.Duration `env:"TTL"           envDefault:"720h"`
+	CookieSecure bool          `env:"COOKIE_SECURE" envDefault:"true"`
 }
 
 // Load reads the process environment only. Populating that environment from a

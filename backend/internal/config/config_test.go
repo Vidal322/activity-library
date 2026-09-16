@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testDSN carries a recognisable password so the redaction tests can assert on
@@ -15,7 +16,16 @@ const testDSN = "postgres://user:hunter2@localhost:5432/activity_library?sslmode
 // envKeys lists every variable Load reads, plus the unprefixed DSN that
 // it must ignore. setEnv clears all of them so a test never inherits a value
 // from the developer's shell or from a sibling test.
-var envKeys = []string{"ADDR", "DB_DSN", "DB_MAX_CONNS", "DB_MIN_CONNS", "DSN"}
+var envKeys = []string{
+	"ADDR",
+	"DB_DSN", "DB_MAX_CONNS", "DB_MIN_CONNS",
+	"SESSION_TTL", "SESSION_COOKIE_SECURE",
+	// The unprefixed spellings the prefix tests set. They are listed so that
+	// clearing happens for them too: a stray TTL in a developer's shell would
+	// otherwise be read straight into SessionConfig if the envPrefix tag were
+	// ever dropped, and the test guarding that would pass for the wrong reason.
+	"DSN", "TTL", "COOKIE_SECURE",
+}
 
 // setEnv installs exactly the given variables and removes the rest.
 //
@@ -55,13 +65,25 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.DB.MinConns != 5 {
 		t.Errorf("DB.MinConns = %d, want 5", cfg.DB.MinConns)
 	}
+	if cfg.Session.TTL != 720*time.Hour {
+		t.Errorf("Session.TTL = %v, want 720h", cfg.Session.TTL)
+	}
+	// The direction of this default is the point, not the value. Secure is the
+	// one cookie attribute that differs between a laptop and production, and a
+	// deployment that forgets the variable has to end up with the cookie
+	// restricted to HTTPS rather than sent in cleartext.
+	if !cfg.Session.CookieSecure {
+		t.Error("Session.CookieSecure = false, want true — the default has to fail closed")
+	}
 }
 
 func TestLoadConfigOverrides(t *testing.T) {
 	setEnv(t, map[string]string{
-		"ADDR":         ":9999",
-		"DB_DSN":       testDSN,
-		"DB_MAX_CONNS": "40",
+		"ADDR":                  ":9999",
+		"DB_DSN":                testDSN,
+		"DB_MAX_CONNS":          "40",
+		"SESSION_TTL":           "30m",
+		"SESSION_COOKIE_SECURE": "false",
 	})
 
 	cfg, err := Load()
@@ -74,6 +96,23 @@ func TestLoadConfigOverrides(t *testing.T) {
 	}
 	if cfg.DB.MaxConns != 40 {
 		t.Errorf("DB.MaxConns = %d, want 40 — the environment must win over envDefault", cfg.DB.MaxConns)
+	}
+	if cfg.Session.TTL != 30*time.Minute {
+		t.Errorf("Session.TTL = %v, want 30m — the environment must win over envDefault", cfg.Session.TTL)
+	}
+	if cfg.Session.CookieSecure {
+		t.Error("Session.CookieSecure = true, want false — the environment must win over envDefault")
+	}
+}
+
+// TestLoadConfigRejectsUnitlessTTL pins the duration parse. A bare number is
+// read as nanoseconds by time.ParseDuration's callers elsewhere and would be a
+// silent near-zero TTL here, so it has to fail at startup instead.
+func TestLoadConfigRejectsUnitlessTTL(t *testing.T) {
+	setEnv(t, map[string]string{"DB_DSN": testDSN, "SESSION_TTL": "2592000"})
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() accepted SESSION_TTL without a unit, want an error")
 	}
 }
 
@@ -100,6 +139,32 @@ func TestLoadConfigIgnoresUnprefixedDSN(t *testing.T) {
 	cfg, err := Load()
 	if err == nil {
 		t.Fatalf("Load() read the DSN from DSN rather than DB_DSN, giving %q", cfg.DB.DSN)
+	}
+}
+
+// TestLoadConfigIgnoresUnprefixedSessionVars is the SESSION_ counterpart of the
+// test above, and guards a mistake that was actually made: the nested struct
+// was added without its envPrefix tag, and env/v11 walked into it anyway and
+// read the fields under their bare names. Nothing failed — TTL and
+// COOKIE_SECURE are ordinary enough words for something else in a shell or a
+// container image to own one.
+func TestLoadConfigIgnoresUnprefixedSessionVars(t *testing.T) {
+	setEnv(t, map[string]string{
+		"DB_DSN":        testDSN,
+		"TTL":           "1h",
+		"COOKIE_SECURE": "false",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+
+	if cfg.Session.TTL != 720*time.Hour {
+		t.Errorf("Session.TTL = %v, want the 720h default — it was read from TTL rather than SESSION_TTL", cfg.Session.TTL)
+	}
+	if !cfg.Session.CookieSecure {
+		t.Error("Session.CookieSecure = false — it was read from COOKIE_SECURE rather than SESSION_COOKIE_SECURE")
 	}
 }
 
