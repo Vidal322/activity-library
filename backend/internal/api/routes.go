@@ -32,8 +32,11 @@ func (s *Server) routes() http.Handler {
 		r.Get("/materials", s.handleMaterialsList)
 		r.Get("/users/{id}", s.handleGetUser)
 		r.Post("/users", s.handleCreateUser)
-		r.Post("/login", s.handleLogin)
-		r.Post("/logout", s.handleLogout)
+
+		r.Route("/auth", func(r chi.Router) {
+			r.Post("/login", s.handleLogin)
+			r.Post("/logout", s.handleLogout)
+		})
 	})
 
 	return r
