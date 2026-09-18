@@ -24,6 +24,12 @@ func TestMain(m *testing.M) {
 // database fails a test instead of hanging the suite.
 const queryTimeout = 5 * time.Second
 
+// testSessionTTL is the session lifetime the test server runs with. It matches
+// the production default, because the cookie tests assert the Max-Age it
+// produces and a round number here would hide an arithmetic mistake that a real
+// duration would expose.
+const testSessionTTL = 720 * time.Hour
+
 // newTestServer truncates the database and serves the real router over a real
 // socket, so a test exercises routing, middleware and encoding rather than
 // calling a handler function.
@@ -37,9 +43,35 @@ func newTestServer(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 	pool := testutil.RequirePool(t)
 	testutil.Truncate(t, pool)
 
-	// The zero Config is enough: Addr belongs to the production listener, and
-	// httptest picks its own port.
-	srv := httptest.NewServer(NewServer(config.Config{}, pool).routes())
+	return newTestServerWithConfig(t, testConfig())
+}
+
+// testConfig is what newTestServer runs with. Addr is left at its zero value
+// because it belongs to the production listener and httptest picks its own
+// port, but the session fields cannot be: a zero TTL writes a cookie with no
+// Max-Age and a sessions row that has already expired, so every login test
+// would be asserting against a session the next request would reject.
+//
+// CookieSecure is false to match the plain http httptest serves over. The tests
+// that care about that attribute set it themselves.
+func testConfig() config.Config {
+	return config.Config{
+		Session: config.SessionConfig{
+			TTL:          testSessionTTL,
+			CookieSecure: false,
+		},
+	}
+}
+
+// newTestServerWithConfig is newTestServer for the tests that need a particular
+// configuration rather than the default one.
+func newTestServerWithConfig(t *testing.T, cfg config.Config) (*httptest.Server, *pgxpool.Pool) {
+	t.Helper()
+
+	pool := testutil.RequirePool(t)
+	testutil.Truncate(t, pool)
+
+	srv := httptest.NewServer(NewServer(cfg, pool).routes())
 	t.Cleanup(srv.Close)
 
 	return srv, pool

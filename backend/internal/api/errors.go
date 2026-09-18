@@ -11,6 +11,7 @@ import (
 const (
 	msgInvalidCredentials = "invalid email or password"
 	msgNotAuthenticated   = "authentication required"
+	msgInternalError      = "internal server error"
 )
 
 var conflictMessages = map[string]string{
@@ -106,7 +107,7 @@ func storeErrorResponse(err error) (int, string) {
 		return http.StatusUnprocessableEntity, message(err, invalidMessages, "invalid request")
 
 	default:
-		return http.StatusInternalServerError, "internal server error"
+		return http.StatusInternalServerError, msgInternalError
 	}
 }
 
@@ -136,5 +137,13 @@ func (s *Server) writeUnprocessable(w http.ResponseWriter, msg string) {
 func (s *Server) writeUnauthorized(w http.ResponseWriter, msg string) {
 	if err := writeErrorJSON(w, http.StatusUnauthorized, msg); err != nil {
 		slog.Error("Failed to write unauthorized request response", "error", err)
+	}
+}
+
+func (s *Server) writeInternalError(w http.ResponseWriter, msg string, args ...any) {
+	slog.Error(msg, args...)
+
+	if err := writeErrorJSON(w, http.StatusInternalServerError, msgInternalError); err != nil {
+		slog.Error("Failed to write internal error response", "error", err)
 	}
 }
