@@ -402,3 +402,226 @@ func TestHandleLoginTrimsTheEmail(t *testing.T) {
 		t.Fatalf("status = %d, want %d — body %s", res.StatusCode, http.StatusOK, body)
 	}
 }
+
+// postLogout sends a logout carrying the cookie it is given, or no cookie at
+// all when that is nil. It builds the request by hand rather than using a
+// client with a jar, because a jar would silently decline to send a cookie
+// whose Path or Secure flag did not match and the test would pass for the
+// wrong reason.
+func postLogout(t *testing.T, baseURL string, cookie *http.Cookie) (*http.Response, []byte) {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/auth/logout", nil)
+	if err != nil {
+		t.Fatalf("could not build the logout request: %v", err)
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1/auth/logout: %v", err)
+	}
+	defer res.Body.Close()
+
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("could not read the response body: %v", err)
+	}
+
+	return res, raw
+}
+
+// login seeds nothing and simply performs one, returning the cookie the caller
+// is about to log out with.
+func login(t *testing.T, baseURL, email, password string) *http.Cookie {
+	t.Helper()
+
+	res, body := postLogin(t, baseURL, loginBody(email, password))
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("setup login: status = %d, want %d — body %s", res.StatusCode, http.StatusOK, body)
+	}
+
+	return sessionCookieFrom(t, res)
+}
+
+// TestHandleLogoutDeletesTheSession is the requirement from the issue: the row
+// has to go, not just the cookie. Counting the rows is the whole point of the
+// test, because a handler that only expired the cookie would still return 204
+// and still look right to a browser.
+func TestHandleLogoutDeletesTheSession(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	seedAccount(t, ctx, pool, testEmail, testPassword, true)
+	cookie := login(t, srv.URL, testEmail, testPassword)
+
+	if n := countSessions(t, ctx, pool); n != 1 {
+		t.Fatalf("sessions holds %d rows after logging in, want 1", n)
+	}
+
+	res, body := postLogout(t, srv.URL, cookie)
+
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d — body %s", res.StatusCode, http.StatusNoContent, body)
+	}
+	if len(body) != 0 {
+		t.Errorf("204 carried a body of %d bytes: %s", len(body), body)
+	}
+	if n := countSessions(t, ctx, pool); n != 0 {
+		t.Errorf("sessions holds %d rows after logging out, want 0 — the cookie was cleared but the session was not", n)
+	}
+}
+
+// TestLogoutClearsTheCookie pins the half a browser acts on. The cleared cookie
+// has to carry the same Name and Path as the one login set, because a browser
+// matches on those before it looks at Max-Age: clear it at a different path and
+// the original is left sitting there, still being sent.
+func TestLogoutClearsTheCookie(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	seedAccount(t, ctx, pool, testEmail, testPassword, true)
+	issued := login(t, srv.URL, testEmail, testPassword)
+
+	res, _ := postLogout(t, srv.URL, issued)
+	cleared := sessionCookieFrom(t, res)
+
+	if cleared.Value != "" {
+		t.Errorf("the cleared cookie still carries a value: %q", cleared.Value)
+	}
+	if cleared.MaxAge >= 0 {
+		t.Errorf("Max-Age = %d, want it negative so the browser drops the cookie now", cleared.MaxAge)
+	}
+	if cleared.Path != issued.Path {
+		t.Errorf("Path = %q, want %q — a browser drops the cookie only at the path it was set on",
+			cleared.Path, issued.Path)
+	}
+	if !cleared.HttpOnly {
+		t.Error("HttpOnly is not set on the cleared cookie")
+	}
+}
+
+// TestHandleLogoutInvalidatesTheSession is the test the issue's "not just the
+// cookie" is really asking for. Counting rows proves the DELETE ran; replaying
+// the cookie proves the endpoint no longer accepts it, which is the property a
+// stolen cookie depends on.
+func TestHandleLogoutInvalidatesTheSession(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	seedAccount(t, ctx, pool, testEmail, testPassword, true)
+	cookie := login(t, srv.URL, testEmail, testPassword)
+
+	if res, body := postLogout(t, srv.URL, cookie); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("first logout: status = %d, want %d — body %s", res.StatusCode, http.StatusNoContent, body)
+	}
+
+	res, body := postLogout(t, srv.URL, cookie)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("replaying the cookie: status = %d, want %d — body %s",
+			res.StatusCode, http.StatusUnauthorized, body)
+	}
+}
+
+// TestHandleLogoutRefusesWithoutAValidSession covers the three ways in, and
+// pins that they answer identically. The bodies are compared to each other
+// rather than to a literal, so rewording msgNotAuthenticated keeps the test
+// meaningful instead of failing it.
+func TestHandleLogoutRefusesWithoutAValidSession(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	seedAccount(t, ctx, pool, testEmail, testPassword, true)
+
+	// A token of the shape login issues, that login never issued. This is the
+	// case that has to reach the database to be refused; the other two do not.
+	unissued, err := auth.NewSessionToken()
+	if err != nil {
+		t.Fatalf("could not build an unissued token: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		cookie *http.Cookie
+	}{
+		{"no cookie", nil},
+		{"malformed value", &http.Cookie{Name: sessionCookieName, Value: "not-a-real-token"}},
+		{"well-formed but unissued", &http.Cookie{Name: sessionCookieName, Value: unissued}},
+	}
+
+	var first []byte
+	for i, c := range cases {
+		res, body := postLogout(t, srv.URL, c.cookie)
+
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d, want %d — body %s",
+				c.name, res.StatusCode, http.StatusUnauthorized, body)
+		}
+
+		if i == 0 {
+			first = body
+			continue
+		}
+		if !bytes.Equal(body, first) {
+			t.Errorf("%s answered %s, but %s answered %s — the two must be indistinguishable",
+				c.name, body, cases[0].name, first)
+		}
+	}
+
+	if n := countSessions(t, ctx, pool); n != 0 {
+		t.Errorf("sessions holds %d rows, want 0", n)
+	}
+}
+
+// TestHandleLogoutLeavesOtherSessionsAlone pins that the DELETE is keyed on the
+// presented token and nothing else. A query that matched on user_id, or that
+// dropped its WHERE clause, passes every test above this one and signs out the
+// whole table here.
+func TestHandleLogoutLeavesOtherSessionsAlone(t *testing.T) {
+	srv, pool := newTestServer(t)
+	ctx := testContext(t)
+
+	const otherEmail = "other@example.com"
+	seedAccount(t, ctx, pool, testEmail, testPassword, true)
+	seedAccount(t, ctx, pool, otherEmail, testPassword, true)
+
+	// Two sessions for the same account as well, so this also covers signing
+	// out of one device without ending the other.
+	mine := login(t, srv.URL, testEmail, testPassword)
+	myOtherDevice := login(t, srv.URL, testEmail, testPassword)
+	theirs := login(t, srv.URL, otherEmail, testPassword)
+
+	if n := countSessions(t, ctx, pool); n != 3 {
+		t.Fatalf("sessions holds %d rows after three logins, want 3", n)
+	}
+
+	if res, body := postLogout(t, srv.URL, mine); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d — body %s", res.StatusCode, http.StatusNoContent, body)
+	}
+
+	if n := countSessions(t, ctx, pool); n != 2 {
+		t.Fatalf("sessions holds %d rows after one logout, want 2", n)
+	}
+
+	for _, c := range []struct {
+		name   string
+		cookie *http.Cookie
+	}{
+		{"the same account's other device", myOtherDevice},
+		{"another account's session", theirs},
+	} {
+		var exists bool
+		err := pool.QueryRow(ctx,
+			`SELECT exists(SELECT 1 FROM sessions WHERE token_hash = $1)`,
+			auth.HashToken(c.cookie.Value),
+		).Scan(&exists)
+		if err != nil {
+			t.Fatalf("could not look up the session: %v", err)
+		}
+		if !exists {
+			t.Errorf("%s was deleted too", c.name)
+		}
+	}
+}

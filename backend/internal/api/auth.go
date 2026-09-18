@@ -106,4 +106,24 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		s.writeUnauthorized(w, msgNotAuthenticated)
+		return
+	}
+	token := c.Value
+	tokenHash := auth.HashToken(token)
+	err = store.DeleteSession(r.Context(), s.pool, tokenHash)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.clearSessionCookie(w)
+			s.writeUnauthorized(w, msgNotAuthenticated)
+			return
+		}
+		s.writeStoreError(w, err)
+		return
+	}
+
+	s.clearSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
 }
