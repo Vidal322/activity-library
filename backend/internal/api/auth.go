@@ -127,3 +127,28 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.clearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		s.writeInternalError(w, "no user on an authenticated route", "path", r.URL.Path)
+		return
+	}
+
+	user, err := store.GetUserByID(r.Context(), s.pool, userID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.clearSessionCookie(w)
+			s.writeUnauthorized(w, msgNotAuthenticated)
+			return
+		}
+		s.writeStoreError(w, err)
+		return
+	}
+
+	err = writeJSON(w, http.StatusOK, newUserDetail(user))
+	if err != nil {
+		slog.Error("could not write handleMe response", "error", err)
+		return
+	}
+}

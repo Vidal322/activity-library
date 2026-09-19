@@ -27,6 +27,7 @@ func (s *Server) routes() http.Handler {
 	r.Route(apiPrefix, func(r chi.Router) {
 		r.Post("/users", s.handleCreateUser)
 		r.Route("/auth", func(r chi.Router) {
+			r.With(s.requireAuth).Get("/me", s.handleMe)
 			r.Post("/login", s.handleLogin)
 			r.Post("/logout", s.handleLogout)
 		})
