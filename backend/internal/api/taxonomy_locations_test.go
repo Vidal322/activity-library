@@ -17,7 +17,7 @@ const testLocationBeach = "40000000-0000-7000-8000-0000000000a3"
 func getLocations(t *testing.T, baseURL string) locationsResponse {
 	t.Helper()
 
-	res, err := http.Get(baseURL + "/v1/locations")
+	res, err := authedGet(t, baseURL+"/v1/locations")
 	if err != nil {
 		t.Fatalf("GET /v1/locations: %v", err)
 	}
@@ -48,7 +48,7 @@ func getLocations(t *testing.T, baseURL string) locationsResponse {
 // Beach is inserted last and carries the highest id, so a query that dropped
 // its ORDER BY would return it last.
 func TestHandleLocationsListOrdersByName(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertLocation(t, ctx, pool, gameLocation{ID: testLocationIndoor, Name: "Indoor"})
@@ -67,9 +67,9 @@ func TestHandleLocationsListOrdersByName(t *testing.T) {
 // TestHandleLocationsListIsEmptyWithoutRows checks the empty case serialises
 // as [] rather than null, so a client can iterate the response unconditionally.
 func TestHandleLocationsListIsEmptyWithoutRows(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, _ := newAuthedTestServer(t)
 
-	res, err := http.Get(srv.URL + "/v1/locations")
+	res, err := authedGet(t, srv.URL+"/v1/locations")
 	if err != nil {
 		t.Fatalf("GET /v1/locations: %v", err)
 	}

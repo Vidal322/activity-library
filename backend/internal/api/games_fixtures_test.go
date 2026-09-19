@@ -290,7 +290,7 @@ func getGamesRaw(t *testing.T, baseURL, rawQuery string) (int, string, []byte) {
 		url += "?" + rawQuery
 	}
 
-	res, err := http.Get(url)
+	res, err := authedGet(t, url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}

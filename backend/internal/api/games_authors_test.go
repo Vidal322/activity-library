@@ -370,7 +370,7 @@ func insertCoWrittenGame(
 }
 
 func TestHandleGamesListReturnsAuthorsOnTheCard(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertNamedAuthor(t, ctx, pool, testAuthorZe, nameZe)
@@ -390,7 +390,7 @@ func TestHandleGamesListReturnsAuthorsOnTheCard(t *testing.T) {
 }
 
 func TestHandleGetGameReturnsAuthors(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertNamedAuthor(t, ctx, pool, testAuthorZe, nameZe)
@@ -417,7 +417,7 @@ func TestHandleGetGameReturnsAuthors(t *testing.T) {
 // Search reaches the store by its own function, so the credit line can be
 // present on the list and missing here.
 func TestHandleGamesSearchReturnsAuthors(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertNamedAuthor(t, ctx, pool, testAuthorZe, nameZe)
@@ -441,7 +441,7 @@ func TestHandleGamesSearchReturnsAuthors(t *testing.T) {
 // fewer games than it asked for. Every game here has two authors, so a page of
 // two must still be two games.
 func TestHandleGamesListPagesGamesNotAuthorRows(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertNamedAuthor(t, ctx, pool, testAuthorZe, nameZe)

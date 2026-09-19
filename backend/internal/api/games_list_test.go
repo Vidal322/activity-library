@@ -10,7 +10,7 @@ import (
 // TestHandleGamesListReturnsOnlyPublished is the assertion the endpoint exists
 // for: a draft is invisible, whatever else is in the table.
 func TestHandleGamesListReturnsOnlyPublished(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -76,7 +76,7 @@ func TestHandleGamesListReturnsOnlyPublished(t *testing.T) {
 // including the two that are easiest to get wrong: a null image and the
 // no_materials flag.
 func TestHandleGamesListMapsCardFields(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -120,7 +120,7 @@ func TestHandleGamesListMapsCardFields(t *testing.T) {
 // and a zero value would misreport: a variant carries no participants or
 // duration of its own, and the card must say so rather than claim zero.
 func TestHandleGamesListKeepsVariantNullsNull(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -161,9 +161,9 @@ func TestHandleGamesListKeepsVariantNullsNull(t *testing.T) {
 // handler: a nil slice would marshal to null, which no client should have to
 // branch on.
 func TestHandleGamesListReturnsEmptyArray(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, _ := newAuthedTestServer(t)
 
-	res, err := http.Get(srv.URL + "/v1/games")
+	res, err := authedGet(t, srv.URL+"/v1/games")
 	if err != nil {
 		t.Fatalf("GET /v1/games: %v", err)
 	}

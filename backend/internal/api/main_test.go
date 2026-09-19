@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Vidal322/activity-library/internal/auth"
 	"github.com/Vidal322/activity-library/internal/config"
 	"github.com/Vidal322/activity-library/internal/testutil"
 )
@@ -85,4 +87,72 @@ func testContext(t *testing.T) context.Context {
 	t.Cleanup(cancel)
 
 	return ctx
+}
+
+// testSessionToken is the token the authenticated test requests present. It is
+// a constant rather than the product of a real login because every login pays
+// for an argon2 verify, and the tests below are exercising the routes behind
+// requireAuth, not the password path. seedSession writes the row it points at
+// exactly as handleLogin would have: the hash in the table, the token in the
+// cookie.
+const testSessionToken = "test-session-token"
+
+// sessionUserEmail belongs to the account seedSession creates. It is distinct
+// from the addresses the auth tests use, so a test can seed its own accounts
+// without colliding with this one.
+const sessionUserEmail = "session@example.com"
+
+// newAuthedTestServer is newTestServer with a live session already in the
+// database, for the routes that now sit behind requireAuth. The cookie itself
+// is not returned because nothing varies per test: authedGet builds it from
+// testSessionToken.
+func newAuthedTestServer(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
+	t.Helper()
+
+	srv, pool := newTestServer(t)
+	seedSession(t, pool)
+
+	return srv, pool
+}
+
+// seedSession inserts an account and a session for it. The pass_hash is a
+// placeholder: nothing on these routes verifies a password, and paying for a
+// real argon2 hash here would add a tenth of a second to every test that only
+// wants to get past the middleware.
+func seedSession(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+
+	ctx := testContext(t)
+
+	var userID string
+	err := pool.QueryRow(ctx,
+		`INSERT INTO users (name, email, pass_hash) VALUES ('Session User', $1, 'not-a-real-hash') RETURNING id`,
+		sessionUserEmail,
+	).Scan(&userID)
+	if err != nil {
+		t.Fatalf("could not seed the session account: %v", err)
+	}
+
+	_, err = pool.Exec(ctx,
+		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
+		auth.HashToken(testSessionToken), userID, time.Now().Add(testSessionTTL),
+	)
+	if err != nil {
+		t.Fatalf("could not seed the session: %v", err)
+	}
+}
+
+// authedGet is http.Get carrying the seeded session cookie. It mirrors
+// http.Get's signature so the call sites keep their own error handling, and it
+// only works against a server built by newAuthedTestServer.
+func authedGet(t *testing.T, url string) (*http.Response, error) {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: testSessionToken})
+
+	return http.DefaultClient.Do(req)
 }

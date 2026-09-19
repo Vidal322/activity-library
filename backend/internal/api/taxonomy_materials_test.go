@@ -17,7 +17,7 @@ const testMaterialBall = "50000000-0000-7000-8000-0000000000a3"
 func getMaterials(t *testing.T, baseURL string) materialsResponse {
 	t.Helper()
 
-	res, err := http.Get(baseURL + "/v1/materials")
+	res, err := authedGet(t, baseURL+"/v1/materials")
 	if err != nil {
 		t.Fatalf("GET /v1/materials: %v", err)
 	}
@@ -48,7 +48,7 @@ func getMaterials(t *testing.T, baseURL string) materialsResponse {
 // renders. Ball is inserted last and carries the highest id, so a query that
 // dropped its ORDER BY would return it last.
 func TestHandleMaterialsListOrdersByName(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertMaterial(t, ctx, pool, gameMaterial{
@@ -71,7 +71,7 @@ func TestHandleMaterialsListOrdersByName(t *testing.T) {
 // with each material, since the picker shows it next to the name. The empty
 // description is covered too: the column defaults to ”, not NULL.
 func TestHandleMaterialsListCarriesDescriptions(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertMaterial(t, ctx, pool, gameMaterial{
@@ -94,9 +94,9 @@ func TestHandleMaterialsListCarriesDescriptions(t *testing.T) {
 // TestHandleMaterialsListIsEmptyWithoutRows checks the empty case serialises
 // as [] rather than null, so a client can iterate the response unconditionally.
 func TestHandleMaterialsListIsEmptyWithoutRows(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, _ := newAuthedTestServer(t)
 
-	res, err := http.Get(srv.URL + "/v1/materials")
+	res, err := authedGet(t, srv.URL+"/v1/materials")
 	if err != nil {
 		t.Fatalf("GET /v1/materials: %v", err)
 	}

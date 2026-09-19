@@ -21,7 +21,7 @@ const (
 func getCategories(t *testing.T, baseURL string) categoriesResponse {
 	t.Helper()
 
-	res, err := http.Get(baseURL + "/v1/categories")
+	res, err := authedGet(t, baseURL+"/v1/categories")
 	if err != nil {
 		t.Fatalf("GET /v1/categories: %v", err)
 	}
@@ -53,7 +53,7 @@ func getCategories(t *testing.T, baseURL string) categoriesResponse {
 // display_order while its id sorts second, and within Energy, Calm sorts first
 // on display_order while its id sorts second.
 func TestHandleCategoriesListGroupsAndOrders(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertCategory(t, ctx, pool, gameCategory{
@@ -125,7 +125,7 @@ func TestHandleCategoriesListGroupsAndOrders(t *testing.T) {
 // TestHandleCategoriesListOmitsAFamilyWithNoActiveCategories pins the inner
 // join: the rail should not render a section header with nothing under it.
 func TestHandleCategoriesListOmitsAFamilyWithNoActiveCategories(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertCategory(t, ctx, pool, gameCategory{
@@ -151,9 +151,9 @@ func TestHandleCategoriesListOmitsAFamilyWithNoActiveCategories(t *testing.T) {
 // TestHandleCategoriesListIsEmptyWithoutRows checks the empty case serialises
 // as [] rather than null, so a client can iterate the response unconditionally.
 func TestHandleCategoriesListIsEmptyWithoutRows(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, _ := newAuthedTestServer(t)
 
-	res, err := http.Get(srv.URL + "/v1/categories")
+	res, err := authedGet(t, srv.URL+"/v1/categories")
 	if err != nil {
 		t.Fatalf("GET /v1/categories: %v", err)
 	}

@@ -116,7 +116,7 @@ func seedFilterFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 // TestHandleGamesListFiltersByCategory is the base case: only the games
 // carrying the category come back, still newest first, still without the draft.
 func TestHandleGamesListFiltersByCategory(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	body := getGamesFiltered(t, srv.URL, "category="+testCategoryIcebreaker)
@@ -128,7 +128,7 @@ func TestHandleGamesListFiltersByCategory(t *testing.T) {
 // two categories narrow the list rather than widening it, so the game carrying
 // only one of them drops out.
 func TestHandleGamesListANDsCategories(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	body := getGamesFiltered(t, srv.URL,
@@ -138,7 +138,7 @@ func TestHandleGamesListANDsCategories(t *testing.T) {
 }
 
 func TestHandleGamesListFiltersByLocation(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	body := getGamesFiltered(t, srv.URL, "location="+testLocationIndoor)
@@ -149,7 +149,7 @@ func TestHandleGamesListFiltersByLocation(t *testing.T) {
 // TestHandleGamesListCombinesCategoryAndLocation crosses the two fields. Each
 // half alone matches two games, and only one game satisfies both.
 func TestHandleGamesListCombinesCategoryAndLocation(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	body := getGamesFiltered(t, srv.URL,
@@ -161,7 +161,7 @@ func TestHandleGamesListCombinesCategoryAndLocation(t *testing.T) {
 // TestHandleGamesListWithoutFilterIsUnchanged pins that the filter is opt-in:
 // the parameters absent, the endpoint still lists every published game.
 func TestHandleGamesListWithoutFilterIsUnchanged(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	body := getGames(t, srv.URL)
@@ -176,7 +176,7 @@ func TestHandleGamesListWithoutFilterIsUnchanged(t *testing.T) {
 // The second case is the same id in the spelling pgtype also accepts, which a
 // set keyed on the raw string would miss.
 func TestHandleGamesListDeduplicatesFilterIDs(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	bare := strings.ReplaceAll(testCategoryIcebreaker, "-", "")
@@ -197,7 +197,7 @@ func TestHandleGamesListDeduplicatesFilterIDs(t *testing.T) {
 // Postgres, which answers 22P02 for a malformed uuid; classify does not
 // recognise that code and writeStoreError would report it as a 500.
 func TestHandleGamesListRejectsMalformedFilterID(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	for name, query := range map[string]string{
@@ -229,7 +229,7 @@ func TestHandleGamesListRejectsMalformedFilterID(t *testing.T) {
 // list would read as a library with nothing in it, so it is a 400 naming the
 // id instead.
 func TestHandleGamesListRejectsUnknownFilterID(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	for name, tc := range map[string]struct{ query, wantID string }{
@@ -354,7 +354,7 @@ func seedScalarFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 // when its declared band contains the number, and the band is inclusive at both
 // ends, so the counsellor with exactly max_participants kids is not turned away.
 func TestHandleGamesListFiltersByParticipants(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedScalarFixture(t, testContext(t), pool)
 
 	for name, tc := range map[string]struct {
@@ -380,7 +380,7 @@ func TestHandleGamesListFiltersByParticipants(t *testing.T) {
 // other pair of columns, on a fixture where the two bands cut the list
 // differently from the participant ones.
 func TestHandleGamesListFiltersByDuration(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedScalarFixture(t, testContext(t), pool)
 
 	for name, tc := range map[string]struct {
@@ -405,7 +405,7 @@ func TestHandleGamesListFiltersByDuration(t *testing.T) {
 // filter in its own right rather than a filter switched off, which is the only
 // reading that lets the chip's two states both be expressible in the URL.
 func TestHandleGamesListFiltersByNoMaterials(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedScalarFixture(t, testContext(t), pool)
 
 	for name, tc := range map[string]struct {
@@ -428,7 +428,7 @@ func TestHandleGamesListFiltersByNoMaterials(t *testing.T) {
 // filter alone admits two games and no two of them admit the same pair, so a
 // query that answered by honouring only one of them would be visible here.
 func TestHandleGamesListCombinesScalarAndCategoryFilters(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedScalarFixture(t, testContext(t), pool)
 
 	for name, tc := range map[string]struct {
@@ -470,7 +470,7 @@ func TestHandleGamesListCombinesScalarAndCategoryFilters(t *testing.T) {
 // of everything else. A blank bound means nobody said, not does not fit, so it
 // is read as no limit on that side rather than as a reason to hide the game.
 func TestHandleGamesListScalarFiltersTreatNullBoundsAsUnbounded(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -524,7 +524,7 @@ func TestHandleGamesListScalarFiltersTreatNullBoundsAsUnbounded(t *testing.T) {
 // An empty value is a 400 too. The rail holds its state in the URL, so a
 // cleared control has to drop its key rather than send it blank.
 func TestHandleGamesListRejectsMalformedScalarFilter(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedScalarFixture(t, testContext(t), pool)
 
 	for name, query := range map[string]string{

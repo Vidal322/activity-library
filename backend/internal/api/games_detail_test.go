@@ -15,7 +15,7 @@ import (
 func getGame(t *testing.T, baseURL, id string) (int, []byte) {
 	t.Helper()
 
-	res, err := http.Get(baseURL + "/v1/games/" + id)
+	res, err := authedGet(t, baseURL+"/v1/games/"+id)
 	if err != nil {
 		t.Fatalf("GET /v1/games/%s: %v", id, err)
 	}
@@ -33,7 +33,7 @@ func getGame(t *testing.T, baseURL, id string) (int, []byte) {
 // the same envelope-free summary the list endpoint emits, so a client reading a
 // card and a client reading a game see one shape.
 func TestHandleGetGameReturnsTheRow(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -94,7 +94,7 @@ func TestHandleGetGameReturnsTheRow(t *testing.T) {
 // endpoint also guards: a variant carries no participants or duration of its
 // own, and the response must say null rather than claim zero.
 func TestHandleGetGameKeepsVariantNullsNull(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -141,7 +141,7 @@ func TestHandleGetGameKeepsVariantNullsNull(t *testing.T) {
 // classify to turn it into ErrNotFound, and a slice-collecting query would
 // panic or return a zero value instead.
 func TestHandleGetGameUnknownID(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -166,7 +166,7 @@ func TestHandleGetGameUnknownID(t *testing.T) {
 // before querying: Postgres answers a malformed uuid with 22P02, which classify
 // does not recognise and writeStoreError would report as a 500.
 func TestHandleGetGameMalformedID(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, _ := newAuthedTestServer(t)
 
 	for _, id := range []string{
 		"not-a-uuid",
@@ -194,7 +194,7 @@ func TestHandleGetGameMalformedID(t *testing.T) {
 // both join tables come back on the game, and each category carries the family
 // it belongs to.
 func TestHandleGetGameIncludesAssociations(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -286,7 +286,7 @@ func TestHandleGetGameIncludesAssociations(t *testing.T) {
 // newGameDetail: a game with no links must answer with [] rather than null, so
 // the frontend never branches on the difference.
 func TestHandleGetGameEmptyAssociations(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -337,7 +337,7 @@ func TestHandleGetGameEmptyAssociations(t *testing.T) {
 // list renderable, and all three live on the join row rather than the material,
 // so a query that forgot to select them still returns a plausible-looking name.
 func TestHandleGetGameIncludesMaterialQuantities(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -424,7 +424,7 @@ func TestHandleGetGameIncludesMaterialQuantities(t *testing.T) {
 // a client that reads the array alone cannot tell a deliberate empty kit from
 // an incomplete record.
 func TestHandleGetGameNoMaterialsIsDistinguishable(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -496,7 +496,7 @@ func TestHandleGetGameNoMaterialsIsDistinguishable(t *testing.T) {
 // on insertion order — or on the id, which is a uuidv7 and therefore sorts by
 // insertion time — fails rather than passing by coincidence.
 func TestHandleGetGameIncludesBlocksInPositionOrder(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -579,7 +579,7 @@ func TestHandleGetGameIncludesBlocksInPositionOrder(t *testing.T) {
 // use for. Decoding into gameDetail would drop an extra key silently, so the
 // assertion is on the raw keys the handler actually wrote.
 func TestHandleGetGameOmitsBlockSearchColumn(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)

@@ -71,7 +71,7 @@ func pageGames(t *testing.T, baseURL, query string, limit int) []string {
 // issue asks for: a page size of one walks the seeded library, in the order the
 // unpaged list promises, with nothing skipped or repeated.
 func TestHandleGamesListPagesThroughEveryGameExactlyOnce(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	for _, limit := range []int{1, 2, 3, 50} {
@@ -98,7 +98,7 @@ func TestHandleGamesListPagesThroughEveryGameExactlyOnce(t *testing.T) {
 // cursor without the tiebreaker would either repeat the whole group or skip
 // past it.
 func TestHandleGamesListPagesThroughGamesSharingATimestamp(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -138,7 +138,7 @@ func TestHandleGamesListPagesThroughGamesSharingATimestamp(t *testing.T) {
 // cursor, so it belongs to a part of the list already scrolled past: the rows
 // still to come arrive once each, and none is pushed out of reach.
 func TestHandleGamesListInsertMidScrollDoesNotDuplicateOrHide(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	seedFilterFixture(t, ctx, pool)
@@ -186,7 +186,7 @@ func TestHandleGamesListInsertMidScrollDoesNotDuplicateOrHide(t *testing.T) {
 // and filtering a page at a time, which would return short pages and a cursor
 // that outran its own results.
 func TestHandleGamesListPagingComposesWithFilters(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	for name, tc := range map[string]struct {
@@ -227,7 +227,7 @@ func TestHandleGamesListPagingComposesWithFilters(t *testing.T) {
 // client stops on an absent cursor, so a full last page must still clear it
 // rather than hand back one that answers an empty list.
 func TestHandleGamesListLastPageCarriesNoCursor(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	for name, query := range map[string]string{
@@ -248,7 +248,7 @@ func TestHandleGamesListLastPageCarriesNoCursor(t *testing.T) {
 // TestHandleGamesListDefaultLimitCapsThePage guards the default: a client that
 // names no limit gets a page rather than the library.
 func TestHandleGamesListDefaultLimitCapsThePage(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	insertAuthor(t, ctx, pool, testAuthorID)
@@ -287,7 +287,7 @@ func TestHandleGamesListDefaultLimitCapsThePage(t *testing.T) {
 // rather than clamped, and a cursor that does not decode is refused rather than
 // read as the first page, which would repeat rows the client already showed.
 func TestHandleGamesListRejectsMalformedPaging(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	valid := base64.RawURLEncoding.EncodeToString(
@@ -337,7 +337,7 @@ func base64Query(payload string) string {
 // client hands back the string it was given, so the encoding has to survive a
 // querystring without escaping.
 func TestHandleGamesListAcceptsItsOwnCursorVerbatim(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedFilterFixture(t, testContext(t), pool)
 
 	_, cursor := getGamesPage(t, srv.URL, "limit=1")

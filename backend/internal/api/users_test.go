@@ -48,7 +48,7 @@ func postUser(t *testing.T, baseURL, body string) (int, []byte, string) {
 func getUser(t *testing.T, baseURL, id string) (int, []byte) {
 	t.Helper()
 
-	res, err := http.Get(baseURL + "/v1/users/" + id)
+	res, err := authedGet(t, baseURL+"/v1/users/"+id)
 	if err != nil {
 		t.Fatalf("GET /v1/users/%s: %v", id, err)
 	}
@@ -96,7 +96,7 @@ func decodeUser(t *testing.T, body []byte) userDetail {
 // client sees, and a handler that filled them in from the request would pass
 // the store test and fail this one.
 func TestHandleCreateUserReturnsTheAccount(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, _ := newAuthedTestServer(t)
 
 	status, body, location := postUser(t, srv.URL,
 		`{"name":"Ana Marques","email":"ana@example.test","password":"`+testPassword+`"}`)
@@ -136,7 +136,7 @@ func TestHandleCreateUserReturnsTheAccount(t *testing.T) {
 // requires the same account back, so a prefix that drifts from the route fails
 // here rather than in a client.
 func TestHandleCreateUserLocationResolves(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, _ := newAuthedTestServer(t)
 
 	status, body, location := postUser(t, srv.URL,
 		`{"name":"Ana Marques","email":"ana@example.test","password":"`+testPassword+`"}`)
@@ -145,7 +145,7 @@ func TestHandleCreateUserLocationResolves(t *testing.T) {
 	}
 	created := decodeUser(t, body)
 
-	res, err := http.Get(srv.URL + location)
+	res, err := authedGet(t, srv.URL+location)
 	if err != nil {
 		t.Fatalf("GET %s: %v", location, err)
 	}
@@ -169,7 +169,7 @@ func TestHandleCreateUserLocationResolves(t *testing.T) {
 // against it. A handler that stored the password itself, or stored a hash of
 // the wrong string, passes every other test in this file.
 func TestHandleCreateUserStoresAUsableHash(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	status, body, _ := postUser(t, srv.URL,
@@ -217,7 +217,7 @@ func TestHandleCreateUserStoresAUsableHash(t *testing.T) {
 // path, because an error body assembled from a row would leak just as well as a
 // successful one.
 func TestNoResponseEverCarriesTheHash(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	seeded := seedUser(t, ctx, pool, "Bruno Costa", "bruno@example.test")
@@ -278,7 +278,7 @@ func TestNoResponseEverCarriesTheHash(t *testing.T) {
 // lower(email) sits in: the constraint fires, classify names it, and
 // conflictMessages turns that name into something a person can act on.
 func TestHandleCreateUserRejectsADuplicate(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, _ := newAuthedTestServer(t)
 
 	status, body, _ := postUser(t, srv.URL,
 		`{"name":"Ana Marques","email":"ana@example.test","password":"`+testPassword+`"}`)
@@ -351,7 +351,7 @@ func TestHandleCreateUserRefusesInvalidValues(t *testing.T) {
 		},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
-			srv, _ := newTestServer(t)
+			srv, _ := newAuthedTestServer(t)
 
 			status, body, _ := postUser(t, srv.URL, tc.body)
 
@@ -389,7 +389,7 @@ func TestHandleCreateUserRejectsAnUnreadableBody(t *testing.T) {
 		},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
-			srv, _ := newTestServer(t)
+			srv, _ := newAuthedTestServer(t)
 
 			status, body, _ := postUser(t, srv.URL, tc.body)
 
@@ -407,6 +407,8 @@ func TestHandleCreateUserRejectsAnUnreadableBody(t *testing.T) {
 // table as it found it. The validation runs before the insert, so this is the
 // assertion that a later reordering would break.
 func TestHandleCreateUserWritesNothingWhenRefused(t *testing.T) {
+	// Not newAuthedTestServer: registration is open, and the count below is
+	// over the whole table, so a seeded session account would fail it.
 	srv, pool := newTestServer(t)
 	ctx := testContext(t)
 
@@ -428,7 +430,7 @@ func TestHandleCreateUserWritesNothingWhenRefused(t *testing.T) {
 // TestHandleGetUserReturnsTheAccount pins the read shape, which the create
 // endpoint reuses.
 func TestHandleGetUserReturnsTheAccount(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
 	// A second account the request must not return.
@@ -462,7 +464,7 @@ func TestHandleGetUserRejectsABadID(t *testing.T) {
 		{"unknown", "00000000-0000-7000-8000-000000000000", http.StatusNotFound},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
-			srv, _ := newTestServer(t)
+			srv, _ := newAuthedTestServer(t)
 
 			status, body := getUser(t, srv.URL, tc.id)
 			if status != tc.wantStatus {

@@ -108,7 +108,7 @@ func seedSearchFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 // search path orders by ts_rank_cd rather than by created_at: the title match
 // has to lead even though it is not the row a plain list would put first.
 func TestHandleGamesListSearchRanksTitleFirst(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedSearchFixture(t, testContext(t), pool)
 
 	body := getGamesFiltered(t, srv.URL, "query=balão")
@@ -123,7 +123,7 @@ func TestHandleGamesListSearchRanksTitleFirst(t *testing.T) {
 // criterion: a game whose only match is inside a block still comes back, which
 // only holds while the blocks trigger keeps game_search.document current.
 func TestHandleGamesListSearchReachesBlockProse(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedSearchFixture(t, testContext(t), pool)
 
 	body := getGamesFiltered(t, srv.URL, "query=escondida")
@@ -135,7 +135,7 @@ func TestHandleGamesListSearchReachesBlockProse(t *testing.T) {
 // A counsellor types from a phone keyboard without accents and still has to
 // find the game.
 func TestHandleGamesListSearchFoldsAccents(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedSearchFixture(t, testContext(t), pool)
 
 	body := getGamesFiltered(t, srv.URL, "query=balao")
@@ -148,7 +148,7 @@ func TestHandleGamesListSearchFoldsAccents(t *testing.T) {
 // list endpoint rather than beside it: the filter rail stays live while a
 // search is running, so the two have to narrow together.
 func TestHandleGamesListSearchComposesWithFilters(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedSearchFixture(t, testContext(t), pool)
 
 	body := getGamesFiltered(t, srv.URL, "query=balão&category="+testCategoryActive)
@@ -162,7 +162,7 @@ func TestHandleGamesListSearchComposesWithFilters(t *testing.T) {
 // not the query: the search page is positioned by a row count rather than a
 // keyset, and the client must not be able to tell.
 func TestHandleGamesListSearchPagesByCursor(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedSearchFixture(t, testContext(t), pool)
 
 	first := getGamesFiltered(t, srv.URL, "query=balão&limit=2")
@@ -186,7 +186,7 @@ func TestHandleGamesListSearchPagesByCursor(t *testing.T) {
 // a keyset cursor to a path that reads row counts, and the offset it decoded to
 // would be silent nonsense.
 func TestHandleGamesListSearchRejectsListCursor(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedSearchFixture(t, testContext(t), pool)
 
 	list := getGamesFiltered(t, srv.URL, "limit=2")
@@ -204,7 +204,7 @@ func TestHandleGamesListSearchRejectsListCursor(t *testing.T) {
 // TestHandleGamesListSearchRejectsEmptyQuery is issue 21's 400: an empty search
 // box is the client's to leave off the request entirely.
 func TestHandleGamesListSearchRejectsEmptyQuery(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedSearchFixture(t, testContext(t), pool)
 
 	for _, rawQuery := range []string{"query=", "query=%20%20"} {
@@ -223,7 +223,7 @@ func TestHandleGamesListSearchRejectsEmptyQuery(t *testing.T) {
 // rather than an error: websearch_to_tsquery takes anything a user types, so a
 // term nobody wrote is a normal answer.
 func TestHandleGamesListSearchMatchesNothing(t *testing.T) {
-	srv, pool := newTestServer(t)
+	srv, pool := newAuthedTestServer(t)
 	seedSearchFixture(t, testContext(t), pool)
 
 	body := getGamesFiltered(t, srv.URL, "query=trampolim")
