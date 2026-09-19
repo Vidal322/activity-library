@@ -131,9 +131,8 @@ CREATE TABLE games (
 );
 
 CREATE INDEX games_original_idx ON games (original_id) WHERE original_id IS NOT NULL;
-CREATE INDEX games_published_keyset_idx
-    ON games (created_at DESC, id DESC)
-    WHERE publish_state = 'published';
+
+CREATE INDEX games_keyset_idx ON games (created_at DESC, id DESC);
 
 CREATE TRIGGER games_set_updated_at
     BEFORE UPDATE ON games
