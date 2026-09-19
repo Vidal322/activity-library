@@ -25,17 +25,21 @@ func (s *Server) routes() http.Handler {
 	r.Get("/readyz", s.handleReadiness)
 
 	r.Route(apiPrefix, func(r chi.Router) {
-		r.Get("/games", s.handleGamesList)
-		r.Get("/games/{id}", s.handleGetGame)
-		r.Get("/categories", s.handleCategoriesList)
-		r.Get("/locations", s.handleLocationsList)
-		r.Get("/materials", s.handleMaterialsList)
-		r.Get("/users/{id}", s.handleGetUser)
 		r.Post("/users", s.handleCreateUser)
-
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/login", s.handleLogin)
 			r.Post("/logout", s.handleLogout)
+		})
+
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAuth)
+
+			r.Get("/games", s.handleGamesList)
+			r.Get("/games/{id}", s.handleGetGame)
+			r.Get("/categories", s.handleCategoriesList)
+			r.Get("/locations", s.handleLocationsList)
+			r.Get("/materials", s.handleMaterialsList)
+			r.Get("/users/{id}", s.handleGetUser)
 		})
 	})
 
