@@ -215,6 +215,7 @@ func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 		nextCursor *string
 	)
 
+	userID, _ := userIDFromContext(r.Context())
 	if q != nil {
 		offset, err := parseOffsetCursor(query["cursor"])
 		if err != nil {
@@ -222,7 +223,7 @@ func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		found, err := store.SearchGames(r.Context(), s.pool, *q, filter, limit, offset)
+		found, err := store.SearchGames(r.Context(), s.pool, *q, filter, limit, offset, userID)
 		if err != nil {
 			s.writeStoreError(w, err)
 			return
@@ -241,7 +242,7 @@ func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 		}
 
 		page, err := store.ListGames(r.Context(), s.pool, filter,
-			store.GamePage{Limit: limit, Cursor: cursor})
+			store.GamePage{Limit: limit, Cursor: cursor}, userID)
 		if err != nil {
 			s.writeStoreError(w, err)
 			return
@@ -276,7 +277,9 @@ func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	game, err := store.GetGameByID(r.Context(), s.pool, gameID)
+	userID, _ := userIDFromContext(r.Context())
+
+	game, err := store.GetGameByID(r.Context(), s.pool, gameID, userID)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -42,8 +43,9 @@ type GameFilter struct {
 	NoMaterials  *bool
 }
 
-// gameColumns and gameFilters are shared with SearchGames in search.go, which
-// differs from the list only in how it orders rows and positions a page.
+// gameColumns, gameFilters and gameVisibility are shared with SearchGames in
+// search.go, which differs from the list only in how it orders rows and
+// positions a page.
 const gameColumns = `
 	SELECT g.id, g.title, g.description, g.image,
 	       g.min_participants, g.max_participants,
@@ -67,9 +69,18 @@ const gameFilters = `
 	        AND (g.duration_max IS NULL OR g.duration_max >= $4)))
 	  AND ($5::bool IS NULL OR g.no_materials = $5)`
 
-const listGamesQuery = gameColumns + `
+// gameVisibility admits a game the caller may see: published, or a draft the
+// caller authored. The viewer's parameter number differs between the queries
+// that carry it, so the predicate takes it by position.
+const gameVisibility = `
+	  (g.publish_state = 'published'
+	   OR EXISTS (
+	         SELECT 1 FROM game_authors ga
+	         WHERE ga.game_id = g.id AND ga.user_id = $%d::uuid))`
+
+var listGamesQuery = gameColumns + `
 	FROM games g
-	WHERE g.publish_state = 'published'` + gameFilters + `
+	WHERE` + fmt.Sprintf(gameVisibility, 9) + gameFilters + `
 	  AND ($6::timestamptz IS NULL
 	       OR (g.created_at, g.id) < ($6::timestamptz, $7::uuid))
 	ORDER BY g.created_at DESC, g.id DESC
@@ -172,6 +183,7 @@ func ListGames(
 	pool *pgxpool.Pool,
 	filter GameFilter,
 	page GamePage,
+	userID string,
 ) (GameList, error) {
 	if err := checkFilterIDs(ctx, pool, filter); err != nil {
 		return GameList{}, err
@@ -205,6 +217,7 @@ func ListGames(
 		cursorCreatedAt,
 		cursorID,
 		limit+1,
+		userID,
 	)
 	if err != nil {
 		return GameList{}, classify(err)
@@ -345,13 +358,14 @@ type GameDetail struct {
 	Blocks     []GameBlock
 }
 
-const getGameQuery = `
-	SELECT id, title, description, image,
-	       min_participants, max_participants,
-	       duration_min, duration_max,
-	       no_materials, created_at
-	FROM games
-	WHERE id = $1`
+var getGameQuery = `
+	SELECT g.id, g.title, g.description, g.image,
+	       g.min_participants, g.max_participants,
+	       g.duration_min, g.duration_max,
+	       g.no_materials, g.created_at
+	FROM games g
+	WHERE g.id = $1
+	  AND` + fmt.Sprintf(gameVisibility, 2)
 
 const getGameCategoriesQuery = `
 	SELECT c.id, c.name, c.description, c.active, c.display_order,
@@ -385,8 +399,13 @@ const getGameBlocksQuery = `
 
 // GetGameByID returns one game with its categories, locations, materials and
 // blocks.
-func GetGameByID(ctx context.Context, pool *pgxpool.Pool, gameId string) (GameDetail, error) {
-	row, err := pool.Query(ctx, getGameQuery, gameId)
+func GetGameByID(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameId string,
+	userId string,
+) (GameDetail, error) {
+	row, err := pool.Query(ctx, getGameQuery, gameId, userId)
 	if err != nil {
 		return GameDetail{}, classify(err)
 	}

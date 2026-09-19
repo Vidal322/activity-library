@@ -2,16 +2,17 @@ package store
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // searchGamesQuery ranks with ts_rank_cd
-const searchGamesQuery = gameColumns + `
+var searchGamesQuery = gameColumns + `
 	FROM games g
 	JOIN game_search gs ON gs.game_id = g.id
-	WHERE g.publish_state = 'published'` + gameFilters + `
+	WHERE` + fmt.Sprintf(gameVisibility, 9) + gameFilters + `
 	  AND gs.document @@ websearch_to_tsquery('pt_unaccent', $6)
 	ORDER BY ts_rank_cd(gs.document, websearch_to_tsquery('pt_unaccent', $6)) DESC,
 	         g.created_at DESC, g.id DESC
@@ -36,6 +37,7 @@ func SearchGames(
 	filter GameFilter,
 	limit int32,
 	offset int32,
+	userID string,
 ) (GameSearch, error) {
 	if err := checkFilterIDs(ctx, pool, filter); err != nil {
 		return GameSearch{}, err
@@ -62,6 +64,7 @@ func SearchGames(
 		q,
 		limit+1,
 		offset,
+		userID,
 	)
 	if err != nil {
 		return GameSearch{}, classify(err)
