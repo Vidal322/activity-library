@@ -102,6 +102,12 @@ const testSessionToken = "test-session-token"
 // without colliding with this one.
 const sessionUserEmail = "session@example.com"
 
+// testSessionUserID is that account's id, fixed rather than generated so a
+// test can credit it as the author of a game and assert on what the caller may
+// see of their own work. It sits outside the a1/b* run the game fixtures hand
+// out, since this account outlives any one of them.
+const testSessionUserID = "10000000-0000-7000-8000-0000000000f1"
+
 // newAuthedTestServer is newTestServer with a live session already in the
 // database, for the routes that now sit behind requireAuth. The cookie itself
 // is not returned because nothing varies per test: authedGet builds it from
@@ -124,18 +130,18 @@ func seedSession(t *testing.T, pool *pgxpool.Pool) {
 
 	ctx := testContext(t)
 
-	var userID string
-	err := pool.QueryRow(ctx,
-		`INSERT INTO users (name, email, pass_hash) VALUES ('Session User', $1, 'not-a-real-hash') RETURNING id`,
-		sessionUserEmail,
-	).Scan(&userID)
+	_, err := pool.Exec(ctx,
+		`INSERT INTO users (id, name, email, pass_hash)
+		 VALUES ($1, 'Session User', $2, 'not-a-real-hash')`,
+		testSessionUserID, sessionUserEmail,
+	)
 	if err != nil {
 		t.Fatalf("could not seed the session account: %v", err)
 	}
 
 	_, err = pool.Exec(ctx,
 		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
-		auth.HashToken(testSessionToken), userID, time.Now().Add(testSessionTTL),
+		auth.HashToken(testSessionToken), testSessionUserID, time.Now().Add(testSessionTTL),
 	)
 	if err != nil {
 		t.Fatalf("could not seed the session: %v", err)
