@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -63,36 +61,46 @@ const gameColumns = `
 const gameFilters = `
 	  AND (
 	        SELECT count(*) FROM game_categories gc
-	        WHERE gc.game_id = g.id AND gc.category_id = ANY($1::uuid[])
-	      ) = coalesce(cardinality($1::uuid[]), 0)
+	        WHERE gc.game_id = g.id AND gc.category_id = ANY(@category_ids::uuid[])
+	      ) = coalesce(cardinality(@category_ids::uuid[]), 0)
 	  AND (
 	        SELECT count(*) FROM game_locations gl
-	        WHERE gl.game_id = g.id AND gl.location_id = ANY($2::uuid[])
-	      ) = coalesce(cardinality($2::uuid[]), 0)
-	  AND ($3::int IS NULL OR (
-	            (g.min_participants IS NULL OR g.min_participants <= $3)
-	        AND (g.max_participants IS NULL OR g.max_participants >= $3)))
-	  AND ($4::int IS NULL OR (
-	            (g.duration_min IS NULL OR g.duration_min <= $4)
-	        AND (g.duration_max IS NULL OR g.duration_max >= $4)))
-	  AND ($5::bool IS NULL OR g.no_materials = $5)`
+	        WHERE gl.game_id = g.id AND gl.location_id = ANY(@location_ids::uuid[])
+	      ) = coalesce(cardinality(@location_ids::uuid[]), 0)
+	  AND (@participants::int IS NULL OR (
+	            (g.min_participants IS NULL OR g.min_participants <= @participants)
+	        AND (g.max_participants IS NULL OR g.max_participants >= @participants)))
+	  AND (@duration::int IS NULL OR (
+	            (g.duration_min IS NULL OR g.duration_min <= @duration)
+	        AND (g.duration_max IS NULL OR g.duration_max >= @duration)))
+	  AND (@no_materials::bool IS NULL OR g.no_materials = @no_materials)`
+
+func (f GameFilter) namedArgs() pgx.StrictNamedArgs {
+	return pgx.StrictNamedArgs{
+		"category_ids": f.CategoryIDs,
+		"location_ids": f.LocationIDs,
+		"participants": f.Participants,
+		"duration":     f.Duration,
+		"no_materials": f.NoMaterials,
+	}
+}
 
 // gameVisibility admits a game the caller may see: published, or a draft the
-// caller authored. The viewer's parameter number differs between the queries
-// that carry it, so the predicate takes it by position.
+// caller authored. Every query that carries it names the viewer the same way,
+// so the predicate is the same text wherever it lands.
 const gameVisibility = `
 	  (g.publish_state = 'published'
 	   OR EXISTS (
 	         SELECT 1 FROM game_authors ga
-	         WHERE ga.game_id = g.id AND ga.user_id = $%d::uuid))`
+	         WHERE ga.game_id = g.id AND ga.user_id = @viewer_id::uuid))`
 
-var listGamesQuery = gameColumns + `
+const listGamesQuery = gameColumns + `
 	FROM games g
-	WHERE` + fmt.Sprintf(gameVisibility, 9) + gameFilters + `
-	  AND ($6::timestamptz IS NULL
-	       OR (g.created_at, g.id) < ($6::timestamptz, $7::uuid))
+	WHERE` + gameVisibility + gameFilters + `
+	  AND (@cursor_created_at::timestamptz IS NULL
+	       OR (g.created_at, g.id) < (@cursor_created_at::timestamptz, @cursor_id::uuid))
 	ORDER BY g.created_at DESC, g.id DESC
-	LIMIT $8`
+	LIMIT @limit`
 
 const gameAuthorsQuery = `
 	SELECT ga.game_id, u.id, u.name, u.img
@@ -214,19 +222,13 @@ func ListGames(
 
 	// One row past the page, and dropped below: it answers whether a further
 	// page exists without a second count of the whole filtered set.
-	rows, err := pool.Query(
-		ctx,
-		listGamesQuery,
-		filter.CategoryIDs,
-		filter.LocationIDs,
-		filter.Participants,
-		filter.Duration,
-		filter.NoMaterials,
-		cursorCreatedAt,
-		cursorID,
-		limit+1,
-		userID,
-	)
+	args := filter.namedArgs()
+	args["cursor_created_at"] = cursorCreatedAt
+	args["cursor_id"] = cursorID
+	args["limit"] = limit + 1
+	args["viewer_id"] = userID
+
+	rows, err := pool.Query(ctx, listGamesQuery, args)
 	if err != nil {
 		return GameList{}, classify(err)
 	}
@@ -366,14 +368,14 @@ type GameDetail struct {
 	Blocks     []GameBlock
 }
 
-var getGameQuery = `
+const getGameQuery = `
 	SELECT g.id, g.title, g.description, g.image,
 	       g.min_participants, g.max_participants,
 	       g.duration_min, g.duration_max,
 	       g.no_materials, g.publish_state, g.created_at
 	FROM games g
-	WHERE g.id = $1
-	  AND` + fmt.Sprintf(gameVisibility, 2)
+	WHERE g.id = @game_id
+	  AND` + gameVisibility
 
 const getGameCategoriesQuery = `
 	SELECT c.id, c.name, c.description, c.active, c.display_order,
@@ -413,7 +415,10 @@ func GetGameByID(
 	gameId string,
 	userId string,
 ) (GameDetail, error) {
-	row, err := pool.Query(ctx, getGameQuery, gameId, userId)
+	row, err := pool.Query(ctx, getGameQuery, pgx.StrictNamedArgs{
+		"game_id":   gameId,
+		"viewer_id": userId,
+	})
 	if err != nil {
 		return GameDetail{}, classify(err)
 	}
@@ -579,7 +584,7 @@ type assignable interface {
 // assignments returns one SET clause per named field, with the arguments to
 // match. Only the named fields appear: a column nobody mentioned is a column
 // the UPDATE never touches, which is what makes absent different from null.
-func (e GameEdit) assignments() ([]string, []any) {
+func (e GameEdit) assignments() ([]string, pgx.StrictNamedArgs) {
 	fields := []struct {
 		column string
 		value  assignable
@@ -595,18 +600,17 @@ func (e GameEdit) assignments() ([]string, []any) {
 	}
 
 	sets := make([]string, 0, len(fields))
-	args := make([]any, 0, len(fields))
+	args := make(pgx.StrictNamedArgs, len(fields))
 
 	for _, f := range fields {
 		if !f.value.IsSet() {
 			continue
 		}
 
-		// Appended first, so len(args) is this argument's own placeholder
-		// number: $1 for the first field named, whatever field that turns out
-		// to be.
-		args = append(args, f.value.Arg())
-		sets = append(sets, f.column+" = $"+strconv.Itoa(len(args)))
+		// The column names its own argument, so a field that stays absent
+		// leaves no trace in either the clause or the arguments.
+		args[f.column] = f.value.Arg()
+		sets = append(sets, f.column+" = @"+f.column)
 	}
 
 	return sets, args
@@ -625,17 +629,16 @@ func EditGame(
 		return GetGameByID(ctx, pool, gameID, userID)
 	}
 
-	args = append(args, gameID, userID)
-	gameParam := len(args) - 1
-	viewerParam := len(args)
+	args["game_id"] = gameID
+	args["viewer_id"] = userID
 
 	query := `
 	UPDATE games AS g
 	SET ` + strings.Join(sets, ", ") + `
-	WHERE g.id = $` + strconv.Itoa(gameParam) + `
-	  AND` + fmt.Sprintf(gameVisibility, viewerParam)
+	WHERE g.id = @game_id
+	  AND` + gameVisibility
 
-	tag, err := pool.Exec(ctx, query, args...)
+	tag, err := pool.Exec(ctx, query, args)
 	if err != nil {
 		return GameDetail{}, classify(err)
 	}

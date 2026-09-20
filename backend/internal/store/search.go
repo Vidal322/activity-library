@@ -2,21 +2,24 @@ package store
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// searchGamesQuery ranks with ts_rank_cd
-var searchGamesQuery = gameColumns + `
+// searchGamesQuery ranks with ts_rank_cd.
+//
+// The space in `@@ websearch_to_tsquery` is load-bearing: pgx reads '@'
+// followed by a letter as a named placeholder, so `@@websearch_to_tsquery`
+// would be rewritten into nonsense.
+const searchGamesQuery = gameColumns + `
 	FROM games g
 	JOIN game_search gs ON gs.game_id = g.id
-	WHERE` + fmt.Sprintf(gameVisibility, 9) + gameFilters + `
-	  AND gs.document @@ websearch_to_tsquery('pt_unaccent', $6)
-	ORDER BY ts_rank_cd(gs.document, websearch_to_tsquery('pt_unaccent', $6)) DESC,
+	WHERE` + gameVisibility + gameFilters + `
+	  AND gs.document @@ websearch_to_tsquery('pt_unaccent', @q)
+	ORDER BY ts_rank_cd(gs.document, websearch_to_tsquery('pt_unaccent', @q)) DESC,
 	         g.created_at DESC, g.id DESC
-	LIMIT $7 OFFSET $8`
+	LIMIT @limit OFFSET @offset`
 
 // MaxGameSearchOffset caps how deep a search can be paged.
 const MaxGameSearchOffset int32 = 1000
@@ -53,19 +56,13 @@ func SearchGames(
 		offset = 0
 	}
 
-	rows, err := pool.Query(
-		ctx,
-		searchGamesQuery,
-		filter.CategoryIDs,
-		filter.LocationIDs,
-		filter.Participants,
-		filter.Duration,
-		filter.NoMaterials,
-		q,
-		limit+1,
-		offset,
-		userID,
-	)
+	args := filter.namedArgs()
+	args["q"] = q
+	args["limit"] = limit + 1
+	args["offset"] = offset
+	args["viewer_id"] = userID
+
+	rows, err := pool.Query(ctx, searchGamesQuery, args)
 	if err != nil {
 		return GameSearch{}, classify(err)
 	}
