@@ -36,6 +36,7 @@ func (s *Server) routes() http.Handler {
 			r.Use(s.requireAuth)
 
 			r.Get("/games", s.handleGamesList)
+			r.Post("/games", s.handleCreateDraft)
 			r.Get("/games/{id}", s.handleGetGame)
 			r.Get("/categories", s.handleCategoriesList)
 			r.Get("/locations", s.handleLocationsList)

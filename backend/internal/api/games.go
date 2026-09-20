@@ -1,8 +1,11 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -26,6 +29,7 @@ type gameSummary struct {
 	DurationMin     *int32       `json:"duration_min"`
 	DurationMax     *int32       `json:"duration_max"`
 	NoMaterials     bool         `json:"no_materials"`
+	PublishState    string       `json:"publish_state"`
 	Authors         []gameAuthor `json:"authors"`
 }
 
@@ -53,6 +57,7 @@ func newGameSummary(g store.Game) gameSummary {
 		DurationMin:     g.DurationMin,
 		DurationMax:     g.DurationMax,
 		NoMaterials:     g.NoMaterials,
+		PublishState:    g.PublishState,
 		Authors:         authors,
 	}
 }
@@ -287,5 +292,77 @@ func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {
 
 	if err := writeJSON(w, http.StatusOK, newGameDetail(game)); err != nil {
 		slog.Error("Failed to write get game response", "error", err)
+	}
+}
+
+type createDraftRequest struct {
+	Title           string  `json:"title"`
+	Description     string  `json:"description"`
+	Image           *string `json:"image"`
+	MinParticipants *int32  `json:"min_participants"`
+	MaxParticipants *int32  `json:"max_participants"`
+	DurationMin     *int32  `json:"duration_min"`
+	DurationMax     *int32  `json:"duration_max"`
+	NoMaterials     bool    `json:"no_materials"`
+}
+
+const maxTitle = 200
+
+func (req createDraftRequest) validate() string {
+	switch {
+	case req.Title == "":
+		return "title is required"
+
+	case utf8.RuneCountInString(req.Title) > maxTitle:
+		return fmt.Sprintf("title must not be longer than %d characters", maxTitle)
+	}
+
+	return ""
+}
+
+func (req createDraftRequest) draft() store.Draft {
+	return store.Draft{
+		Title:           req.Title,
+		Description:     req.Description,
+		Image:           req.Image,
+		MinParticipants: req.MinParticipants,
+		MaxParticipants: req.MaxParticipants,
+		DurationMin:     req.DurationMin,
+		DurationMax:     req.DurationMax,
+		NoMaterials:     req.NoMaterials,
+	}
+}
+
+func (s *Server) handleCreateDraft(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		s.writeUnauthorized(w, msgNotAuthenticated)
+		return
+	}
+
+	var req createDraftRequest
+	if err := readJSON(w, r, &req); err != nil {
+		s.writeBadRequest(w, err.Error())
+		return
+	}
+
+	req.Title = strings.TrimSpace(req.Title)
+	req.Description = strings.TrimSpace(req.Description)
+
+	if msg := req.validate(); msg != "" {
+		s.writeUnprocessable(w, msg)
+		return
+	}
+
+	game, err := store.CreateDraft(r.Context(), s.pool, req.draft(), userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	w.Header().Set("Location", apiPrefix+"/games/"+game.ID)
+
+	if err := writeJSON(w, http.StatusCreated, newGameDetail(game)); err != nil {
+		slog.Error("Failed to write create draft response", "error", err)
 	}
 }

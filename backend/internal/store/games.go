@@ -22,6 +22,11 @@ type Game struct {
 	DurationMax     *int32  `db:"duration_max"`
 	NoMaterials     bool    `db:"no_materials"`
 
+	// PublishState is 'draft' or 'published'. It rides along with the card
+	// because a draft only ever reaches its own author, who has to be able to
+	// tell it apart from work they have already published.
+	PublishState string `db:"publish_state"`
+
 	// CreatedAt is the first half of the list's sort key, and so of the
 	// cursor. It is not part of the card the client renders.
 	CreatedAt time.Time `db:"created_at"`
@@ -50,7 +55,7 @@ const gameColumns = `
 	SELECT g.id, g.title, g.description, g.image,
 	       g.min_participants, g.max_participants,
 	       g.duration_min, g.duration_max,
-	       g.no_materials, g.created_at`
+	       g.no_materials, g.publish_state, g.created_at`
 
 const gameFilters = `
 	  AND (
@@ -362,7 +367,7 @@ var getGameQuery = `
 	SELECT g.id, g.title, g.description, g.image,
 	       g.min_participants, g.max_participants,
 	       g.duration_min, g.duration_max,
-	       g.no_materials, g.created_at
+	       g.no_materials, g.publish_state, g.created_at
 	FROM games g
 	WHERE g.id = $1
 	  AND` + fmt.Sprintf(gameVisibility, 2)
@@ -475,4 +480,78 @@ func collectByGame[T any](
 	}
 
 	return values, nil
+}
+
+type Draft struct {
+	Title           string
+	Description     string
+	Image           *string
+	MinParticipants *int32
+	MaxParticipants *int32
+	DurationMin     *int32
+	DurationMax     *int32
+	NoMaterials     bool
+}
+
+const createDraftQuery = `
+	INSERT INTO games (
+		title, description, image,
+		min_participants, max_participants, duration_min, duration_max,
+		no_materials, publish_state)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft')
+	RETURNING id, title, description, image,
+	          min_participants, max_participants,
+	          duration_min, duration_max,
+	          no_materials, publish_state, created_at`
+
+const createDraftAuthorQuery = `
+	INSERT INTO game_authors (game_id, user_id) VALUES ($1, $2)`
+
+func CreateDraft(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	draft Draft,
+	authorID string,
+) (GameDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, createDraftQuery,
+		draft.Title, draft.Description, draft.Image,
+		draft.MinParticipants, draft.MaxParticipants,
+		draft.DurationMin, draft.DurationMax,
+		draft.NoMaterials)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	game, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[Game])
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	if _, err := tx.Exec(ctx, createDraftAuthorQuery, game.ID, authorID); err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	byGame, err := authorsByGame(ctx, pool, []string{game.ID})
+	if err != nil {
+		return GameDetail{}, err
+	}
+	game.Authors = byGame[game.ID]
+
+	return GameDetail{
+		Game:       game,
+		Categories: []GameCategory{},
+		Locations:  []Location{},
+		Materials:  []GameMaterial{},
+		Blocks:     []GameBlock{},
+	}, nil
 }
