@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/Vidal322/activity-library/internal/optional"
 	"github.com/Vidal322/activity-library/internal/store"
 )
 
@@ -364,5 +365,104 @@ func (s *Server) handleCreateDraft(w http.ResponseWriter, r *http.Request) {
 
 	if err := writeJSON(w, http.StatusCreated, newGameDetail(game)); err != nil {
 		slog.Error("Failed to write create draft response", "error", err)
+	}
+}
+
+type editGameRequest struct {
+	Title           optional.Value[string] `json:"title"`
+	Description     optional.Value[string] `json:"description"`
+	Image           optional.Value[string] `json:"image"`
+	MinParticipants optional.Value[int32]  `json:"min_participants"`
+	MaxParticipants optional.Value[int32]  `json:"max_participants"`
+	DurationMin     optional.Value[int32]  `json:"duration_min"`
+	DurationMax     optional.Value[int32]  `json:"duration_max"`
+	NoMaterials     optional.Value[bool]   `json:"no_materials"`
+}
+
+func (req *editGameRequest) normalize() {
+	if title, ok := req.Title.Get(); ok {
+		req.Title = optional.Of(strings.TrimSpace(title))
+	}
+	if description, ok := req.Description.Get(); ok {
+		req.Description = optional.Of(strings.TrimSpace(description))
+	}
+}
+
+func (req editGameRequest) validate() string {
+	switch {
+	case req.Title.IsNull():
+		return "title must not be null"
+
+	case req.Description.IsNull():
+		return "description must not be null"
+
+	case req.NoMaterials.IsNull():
+		return "no_materials must not be null"
+	}
+
+	if title, ok := req.Title.Get(); ok {
+		switch {
+		case title == "":
+			return "title must not be empty"
+
+		case utf8.RuneCountInString(title) > maxTitle:
+			return fmt.Sprintf("title must not be longer than %d characters", maxTitle)
+		}
+	}
+
+	return ""
+}
+
+func (req editGameRequest) edit() store.GameEdit {
+	return store.GameEdit{
+		Title:           req.Title,
+		Description:     req.Description,
+		Image:           req.Image,
+		MinParticipants: req.MinParticipants,
+		MaxParticipants: req.MaxParticipants,
+		DurationMin:     req.DurationMin,
+		DurationMax:     req.DurationMax,
+		NoMaterials:     req.NoMaterials,
+	}
+}
+
+// handleEditGame serves PATCH /v1/games/{id}, returning the game as it stands
+// after the update.
+func (s *Server) handleEditGame(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		s.writeUnauthorized(w, msgNotAuthenticated)
+		return
+	}
+
+	gameID := chi.URLParam(r, "id")
+
+	var parsed pgtype.UUID
+	if err := parsed.Scan(gameID); err != nil {
+		s.writeBadRequest(w, "malformed game id")
+		return
+	}
+
+	var req editGameRequest
+	if err := readJSON(w, r, &req); err != nil {
+		s.writeBadRequest(w, err.Error())
+		return
+	}
+
+	req.normalize()
+
+	if msg := req.validate(); msg != "" {
+		s.writeUnprocessable(w, msg)
+		return
+	}
+
+	game, err := store.EditGame(r.Context(), s.pool, gameID, req.edit(), userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	if err := writeJSON(w, http.StatusOK, newGameDetail(game)); err != nil {
+		slog.Error("Failed to write edit game response", "error", err)
 	}
 }

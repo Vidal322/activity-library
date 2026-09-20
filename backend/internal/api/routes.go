@@ -37,6 +37,7 @@ func (s *Server) routes() http.Handler {
 
 			r.Get("/games", s.handleGamesList)
 			r.Post("/games", s.handleCreateDraft)
+			r.Patch("/games/{id}", s.handleEditGame)
 			r.Get("/games/{id}", s.handleGetGame)
 			r.Get("/categories", s.handleCategoriesList)
 			r.Get("/locations", s.handleLocationsList)

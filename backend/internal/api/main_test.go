@@ -164,6 +164,21 @@ func authedGet(t *testing.T, url string) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
+// authedPatch is authedPost for the partial update, which differs from a
+// create only in the method and in carrying an id.
+func authedPatch(t *testing.T, url, body string) (*http.Response, error) {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPatch, url, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: testSessionToken})
+
+	return http.DefaultClient.Do(req)
+}
+
 // authedPost is authedGet for the write routes. The body is passed as a string
 // rather than a struct because several tests send JSON that no Go type would
 // produce: a field the handler refuses to recognise is the point of the test.

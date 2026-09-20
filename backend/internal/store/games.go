@@ -3,12 +3,15 @@ package store
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Vidal322/activity-library/internal/optional"
 )
 
 type Game struct {
@@ -554,4 +557,92 @@ func CreateDraft(
 		Materials:  []GameMaterial{},
 		Blocks:     []GameBlock{},
 	}, nil
+}
+
+// Optional used to distinguish absent from nul
+type GameEdit struct {
+	Title           optional.Value[string]
+	Description     optional.Value[string]
+	Image           optional.Value[string]
+	MinParticipants optional.Value[int32]
+	MaxParticipants optional.Value[int32]
+	DurationMin     optional.Value[int32]
+	DurationMax     optional.Value[int32]
+	NoMaterials     optional.Value[bool]
+}
+
+type assignable interface {
+	IsSet() bool
+	Arg() any
+}
+
+// assignments returns one SET clause per named field, with the arguments to
+// match. Only the named fields appear: a column nobody mentioned is a column
+// the UPDATE never touches, which is what makes absent different from null.
+func (e GameEdit) assignments() ([]string, []any) {
+	fields := []struct {
+		column string
+		value  assignable
+	}{
+		{"title", e.Title},
+		{"description", e.Description},
+		{"image", e.Image},
+		{"min_participants", e.MinParticipants},
+		{"max_participants", e.MaxParticipants},
+		{"duration_min", e.DurationMin},
+		{"duration_max", e.DurationMax},
+		{"no_materials", e.NoMaterials},
+	}
+
+	sets := make([]string, 0, len(fields))
+	args := make([]any, 0, len(fields))
+
+	for _, f := range fields {
+		if !f.value.IsSet() {
+			continue
+		}
+
+		// Appended first, so len(args) is this argument's own placeholder
+		// number: $1 for the first field named, whatever field that turns out
+		// to be.
+		args = append(args, f.value.Arg())
+		sets = append(sets, f.column+" = $"+strconv.Itoa(len(args)))
+	}
+
+	return sets, args
+}
+
+func EditGame(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameID string,
+	edit GameEdit,
+	userID string,
+) (GameDetail, error) {
+	sets, args := edit.assignments()
+
+	if len(sets) == 0 {
+		return GetGameByID(ctx, pool, gameID, userID)
+	}
+
+	args = append(args, gameID, userID)
+	gameParam := len(args) - 1
+	viewerParam := len(args)
+
+	query := `
+	UPDATE games AS g
+	SET ` + strings.Join(sets, ", ") + `
+	WHERE g.id = $` + strconv.Itoa(gameParam) + `
+	  AND` + fmt.Sprintf(gameVisibility, viewerParam)
+
+	tag, err := pool.Exec(ctx, query, args...)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return GameDetail{}, ErrNotFound
+	}
+
+	return GetGameByID(ctx, pool, gameID, userID)
 }
