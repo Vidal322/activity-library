@@ -566,3 +566,45 @@ func TestEditGameStatementRefusesANonAuthor(t *testing.T) {
 		t.Errorf("title = %q, want it untouched", title)
 	}
 }
+
+// TestHandleEditGameRefusesAnInvertedRange is the create's rule restated for
+// the edit, where it is easier to break by accident: a PATCH carrying one half
+// of a range is checked against the half already in the row, so a lone
+// min_participants can invert a range the caller never sent.
+func TestHandleEditGameRefusesAnInvertedRange(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			// The fixture's max_participants is 30, and stays 30.
+			name: "participants",
+			body: `{"min_participants": 40}`,
+			want: "minimum participants must not exceed maximum participants",
+		},
+		{
+			// Likewise duration_max, which is 40.
+			name: "duration",
+			body: `{"duration_min": 50}`,
+			want: "minimum duration must not exceed maximum duration",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, pool := newAuthedTestServer(t)
+			ctx := testContext(t)
+
+			seedEditFixture(t, ctx, pool)
+
+			status, raw := patchGame(t, srv.URL, editableGame, tc.body)
+			if status != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want %d (body %s)",
+					status, http.StatusUnprocessableEntity, raw)
+			}
+
+			assertErrorMessage(t, raw, tc.want)
+		})
+	}
+}

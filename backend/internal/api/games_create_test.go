@@ -328,3 +328,49 @@ func TestHandleCreateDraftAppearsInTheAuthorsList(t *testing.T) {
 
 	assertGameIDs(t, getGames(t, srv.URL), got.ID)
 }
+
+// TestHandleCreateDraftRefusesAnInvertedRange is the pair of CHECKs that fire
+// on a typo rather than on an attack: a minimum above its maximum. The rule
+// lives in the schema, so the only thing proving the handler does not answer
+// with a 500 is posting the violation and reading the message back — and the
+// message has to name the field, since a caller who swapped two numbers cannot
+// act on "invalid request".
+func TestHandleCreateDraftRefusesAnInvertedRange(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "participants",
+			body: `{"title": "Corrida dos Sacos", "min_participants": 20,
+			        "max_participants": 4, "duration_min": 10, "duration_max": 25}`,
+			want: "minimum participants must not exceed maximum participants",
+		},
+		{
+			name: "duration",
+			body: `{"title": "Corrida dos Sacos", "min_participants": 4,
+			        "max_participants": 20, "duration_min": 25, "duration_max": 10}`,
+			want: "minimum duration must not exceed maximum duration",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, pool := newAuthedTestServer(t)
+			ctx := testContext(t)
+
+			status, raw, _ := postGame(t, srv.URL, tc.body)
+			if status != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want %d (body %s)",
+					status, http.StatusUnprocessableEntity, raw)
+			}
+
+			assertErrorMessage(t, raw, tc.want)
+
+			if n := countGames(t, ctx, pool); n != 0 {
+				t.Errorf("games table holds %d rows, want 0", n)
+			}
+		})
+	}
+}
