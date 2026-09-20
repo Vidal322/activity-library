@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -10,6 +11,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Vidal322/activity-library/internal/optional"
+	"github.com/Vidal322/activity-library/internal/store"
 )
 
 // A partial update has three states per field, and the tests below are
@@ -483,4 +487,82 @@ func updatedAt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id string)
 	}
 
 	return at
+}
+
+// seedSomeoneElsesGame writes a published game credited to testAuthorID rather
+// than to the session user. Published is the point: a draft is already hidden
+// by visibility, so it proves nothing about authorship. This row is one the
+// caller may read and may not change, which is the only combination that
+// separates a real authorship check from a visibility check wearing its name.
+func seedSomeoneElsesGame(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "Another author's game",
+		Description:     "Published, and not yours",
+		MinParticipants: ptr(int32(4)),
+		MaxParticipants: ptr(int32(12)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(20)),
+		PublishState:    "published",
+		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+		Authors:         []string{testAuthorID},
+	})
+}
+
+// titleOf reads a title straight out of the table, past the handler and past
+// visibility, so a test can assert on a row it is not allowed to fetch.
+func titleOf(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id string) string {
+	t.Helper()
+
+	var title string
+	if err := pool.QueryRow(ctx, `SELECT title FROM games WHERE id = $1`, id).Scan(&title); err != nil {
+		t.Fatalf("could not read the title back: %v", err)
+	}
+
+	return title
+}
+
+// TestHandleEditGameRejectsANonAuthor is the case the endpoint was missing:
+// the caller can see this game, so 404 would be a lie, and authentication
+// succeeded, so 401 would be one too. The title is read back afterwards
+// because the status alone would pass for a check that ran after the write.
+func TestHandleEditGameRejectsANonAuthor(t *testing.T) {
+	srv, pool := newAuthedTestServer(t)
+	ctx := testContext(t)
+
+	seedSomeoneElsesGame(t, ctx, pool)
+
+	status, raw := patchGame(t, srv.URL, testGamePublishedNewer, `{"title": "Mine now"}`)
+	if status != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusForbidden, raw)
+	}
+
+	if title := titleOf(t, ctx, pool, testGamePublishedNewer); title != "Another author's game" {
+		t.Errorf("title = %q, want it untouched", title)
+	}
+}
+
+// TestEditGameStatementRefusesANonAuthor reaches past the handler on purpose.
+// handleEditGame calls AuthorizeGameWrite first, so every test above would
+// still pass with an UPDATE that happily rewrote anyone's published game; this
+// one holds the statement itself to the rule, which is what a future write
+// path gets wrong by forgetting the helper rather than by breaking it.
+func TestEditGameStatementRefusesANonAuthor(t *testing.T) {
+	_, pool := newAuthedTestServer(t)
+	ctx := testContext(t)
+
+	seedSomeoneElsesGame(t, ctx, pool)
+
+	_, err := store.EditGame(ctx, pool, testGamePublishedNewer,
+		store.GameEdit{Title: optional.Of("Mine now")}, testSessionUserID)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("EditGame() error = %v, want %v", err, store.ErrNotFound)
+	}
+
+	if title := titleOf(t, ctx, pool, testGamePublishedNewer); title != "Another author's game" {
+		t.Errorf("title = %q, want it untouched", title)
+	}
 }

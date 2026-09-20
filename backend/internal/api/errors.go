@@ -11,6 +11,7 @@ import (
 const (
 	msgInvalidCredentials = "invalid email or password"
 	msgNotAuthenticated   = "authentication required"
+	msgForbidden          = "you did not write this game"
 	msgInternalError      = "internal server error"
 )
 
@@ -102,6 +103,9 @@ func storeErrorResponse(err error) (int, string) {
 
 	case errors.Is(err, store.ErrConflict):
 		return http.StatusConflict, message(err, conflictMessages, "already exists")
+
+	case errors.Is(err, store.ErrForbidden):
+		return http.StatusForbidden, msgForbidden
 
 	case errors.Is(err, store.ErrInvalid):
 		return http.StatusUnprocessableEntity, message(err, invalidMessages, "invalid request")

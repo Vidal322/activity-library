@@ -85,14 +85,19 @@ func (f GameFilter) namedArgs() pgx.StrictNamedArgs {
 	}
 }
 
+// gameAuthorship holds of a game the caller wrote. Seeing a game and changing
+// one are different questions, so the two predicates below stay separate: a
+// read admits more rows than a write does.
+const gameAuthorship = `EXISTS (
+	         SELECT 1 FROM game_authors ga
+	         WHERE ga.game_id = g.id AND ga.user_id = @viewer_id::uuid)`
+
 // gameVisibility admits a game the caller may see: published, or a draft the
 // caller authored. Every query that carries it names the viewer the same way,
 // so the predicate is the same text wherever it lands.
 const gameVisibility = `
 	  (g.publish_state = 'published'
-	   OR EXISTS (
-	         SELECT 1 FROM game_authors ga
-	         WHERE ga.game_id = g.id AND ga.user_id = @viewer_id::uuid))`
+	   OR ` + gameAuthorship + `)`
 
 const listGamesQuery = gameColumns + `
 	FROM games g
@@ -636,7 +641,7 @@ func EditGame(
 	UPDATE games AS g
 	SET ` + strings.Join(sets, ", ") + `
 	WHERE g.id = @game_id
-	  AND` + gameVisibility
+	  AND ` + gameAuthorship
 
 	tag, err := pool.Exec(ctx, query, args)
 	if err != nil {
@@ -650,19 +655,12 @@ func EditGame(
 	return GetGameByID(ctx, pool, gameID, userID)
 }
 
-// gameAuthorQuery answers, in one round trip, the two questions a write path
-// asks: does the game exist, and does the caller author it. A missing game
-// returns no row at all, so "not found" and "not yours" stay distinct.
 const gameAuthorQuery = `
-	SELECT EXISTS (
-	       SELECT 1 FROM game_authors ga
-	       WHERE ga.game_id = g.id AND ga.user_id = @user_id)
+	SELECT ` + gameAuthorship + `
 	FROM games g
-	WHERE g.id = @game_id`
+	WHERE g.id = @game_id
+	  AND` + gameVisibility
 
-// AuthorizeGameWrite reports whether userID may mutate the game, returning
-// ErrNotFound when no such game exists and ErrForbidden when it exists but
-// the caller did not author it.
 func AuthorizeGameWrite(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -672,8 +670,8 @@ func AuthorizeGameWrite(
 	var authored bool
 
 	err := pool.QueryRow(ctx, gameAuthorQuery, pgx.StrictNamedArgs{
-		"game_id": gameID,
-		"user_id": userID,
+		"game_id":   gameID,
+		"viewer_id": userID,
 	}).Scan(&authored)
 	if err != nil {
 		return classify(err)

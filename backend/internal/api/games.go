@@ -443,6 +443,12 @@ func (s *Server) handleEditGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err := store.AuthorizeGameWrite(r.Context(), s.pool, gameID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
 	var req editGameRequest
 	if err := readJSON(w, r, &req); err != nil {
 		s.writeBadRequest(w, err.Error())
