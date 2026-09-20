@@ -649,3 +649,39 @@ func EditGame(
 
 	return GetGameByID(ctx, pool, gameID, userID)
 }
+
+// gameAuthorQuery answers, in one round trip, the two questions a write path
+// asks: does the game exist, and does the caller author it. A missing game
+// returns no row at all, so "not found" and "not yours" stay distinct.
+const gameAuthorQuery = `
+	SELECT EXISTS (
+	       SELECT 1 FROM game_authors ga
+	       WHERE ga.game_id = g.id AND ga.user_id = @user_id)
+	FROM games g
+	WHERE g.id = @game_id`
+
+// AuthorizeGameWrite reports whether userID may mutate the game, returning
+// ErrNotFound when no such game exists and ErrForbidden when it exists but
+// the caller did not author it.
+func AuthorizeGameWrite(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameID string,
+	userID string,
+) error {
+	var authored bool
+
+	err := pool.QueryRow(ctx, gameAuthorQuery, pgx.StrictNamedArgs{
+		"game_id": gameID,
+		"user_id": userID,
+	}).Scan(&authored)
+	if err != nil {
+		return classify(err)
+	}
+
+	if !authored {
+		return ErrForbidden
+	}
+
+	return nil
+}

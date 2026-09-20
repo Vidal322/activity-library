@@ -9,10 +9,11 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("conflict")
-	ErrInvalid  = errors.New("invalid")
-	ErrInUse    = errors.New("in use")
+	ErrNotFound  = errors.New("not found")
+	ErrConflict  = errors.New("conflict")
+	ErrInvalid   = errors.New("invalid")
+	ErrInUse     = errors.New("in use")
+	ErrForbidden = errors.New("forbidden")
 )
 
 type ConstraintError struct {
