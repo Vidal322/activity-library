@@ -472,3 +472,94 @@ func (s *Server) handleEditGame(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to write edit game response", "error", err)
 	}
 }
+
+type blockInput struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Content string `json:"content"`
+}
+
+type editGameBlocksRequest struct {
+	Blocks *[]blockInput `json:"blocks"`
+}
+
+func (req editGameBlocksRequest) validate() string {
+	if req.Blocks == nil {
+		return "blocks must be an array"
+	}
+
+	seen := make(map[string]bool, len(*req.Blocks))
+
+	for i, b := range *req.Blocks {
+		if b.ID == "" {
+			continue
+		}
+
+		var parsed pgtype.UUID
+		if err := parsed.Scan(b.ID); err != nil {
+			return fmt.Sprintf("blocks[%d].id is malformed", i)
+		}
+
+		if seen[b.ID] {
+			return fmt.Sprintf("blocks[%d].id appears more than once", i)
+		}
+		seen[b.ID] = true
+	}
+
+	return ""
+}
+
+func (req editGameBlocksRequest) blocks() []store.GameBlockInput {
+	blocks := make([]store.GameBlockInput, 0, len(*req.Blocks))
+	for _, b := range *req.Blocks {
+		blocks = append(
+			blocks,
+			store.GameBlockInput{ID: b.ID, Type: b.Type, Content: b.Content},
+		)
+	}
+
+	return blocks
+}
+
+func (s *Server) handleEditGameBlocks(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		s.writeUnauthorized(w, msgNotAuthenticated)
+		return
+	}
+
+	gameID := chi.URLParam(r, "id")
+
+	var parsed pgtype.UUID
+	if err := parsed.Scan(gameID); err != nil {
+		s.writeBadRequest(w, "malformed game id")
+		return
+	}
+
+	err := store.AuthorizeGameWrite(r.Context(), s.pool, gameID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	var req editGameBlocksRequest
+	if err := readJSON(w, r, &req); err != nil {
+		s.writeBadRequest(w, err.Error())
+		return
+	}
+
+	if msg := req.validate(); msg != "" {
+		s.writeUnprocessable(w, msg)
+		return
+	}
+
+	game, err := store.EditGameBlocks(r.Context(), s.pool, gameID, req.blocks(), userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	if err := writeJSON(w, http.StatusOK, newGameDetail(game)); err != nil {
+		slog.Error("Failed to write edit game blocks response", "error", err)
+	}
+}

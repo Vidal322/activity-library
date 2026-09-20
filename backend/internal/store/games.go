@@ -661,15 +661,31 @@ const gameAuthorQuery = `
 	WHERE g.id = @game_id
 	  AND` + gameVisibility
 
+// rowQuerier is the one method the authorship check needs, so the check can
+// run against the pool on its own or inside a transaction that is about to
+// write.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 func AuthorizeGameWrite(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	gameID string,
 	userID string,
 ) error {
+	return authorizeGameWrite(ctx, pool, gameID, userID)
+}
+
+func authorizeGameWrite(
+	ctx context.Context,
+	q rowQuerier,
+	gameID string,
+	userID string,
+) error {
 	var authored bool
 
-	err := pool.QueryRow(ctx, gameAuthorQuery, pgx.StrictNamedArgs{
+	err := q.QueryRow(ctx, gameAuthorQuery, pgx.StrictNamedArgs{
 		"game_id":   gameID,
 		"viewer_id": userID,
 	}).Scan(&authored)
@@ -682,4 +698,112 @@ func AuthorizeGameWrite(
 	}
 
 	return nil
+}
+
+type GameBlockInput struct {
+	ID      string
+	Type    string
+	Content string
+}
+
+// UnknownBlockError names a block the request claimed to be editing that this
+// game does not have. It unwraps to ErrInvalid: the game is there and the
+// caller may write it, so the request is unprocessable rather than missing.
+type UnknownBlockError struct {
+	ID string
+}
+
+func (e *UnknownBlockError) Error() string {
+	return "unknown block: " + e.ID
+}
+
+func (e *UnknownBlockError) Unwrap() error {
+	return ErrInvalid
+}
+
+const (
+	deleteRemovedBlocksQuery = `
+		DELETE FROM blocks
+		WHERE game_id = @game_id
+		  AND NOT (id = ANY (@keep::uuid[]))`
+
+	updateBlockQuery = `
+		UPDATE blocks
+		SET type = @type, content = @content, position = @position
+		WHERE id = @id AND game_id = @game_id`
+
+	insertBlockQuery = `
+		INSERT INTO blocks (game_id, type, content, position)
+		VALUES (@game_id, @type, @content, @position)`
+)
+
+func EditGameBlocks(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameID string,
+	blocks []GameBlockInput,
+	userID string,
+) (GameDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := authorizeGameWrite(ctx, tx, gameID, userID); err != nil {
+		return GameDetail{}, err
+	}
+
+	keep := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b.ID != "" {
+			keep = append(keep, b.ID)
+		}
+	}
+
+	_, err = tx.Exec(ctx, deleteRemovedBlocksQuery, pgx.StrictNamedArgs{
+		"game_id": gameID,
+		"keep":    keep,
+	})
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	for i, b := range blocks {
+		position := int32(i)
+
+		if b.ID == "" {
+			_, err = tx.Exec(ctx, insertBlockQuery, pgx.StrictNamedArgs{
+				"game_id":  gameID,
+				"type":     b.Type,
+				"content":  b.Content,
+				"position": position,
+			})
+			if err != nil {
+				return GameDetail{}, classify(err)
+			}
+			continue
+		}
+
+		tag, err := tx.Exec(ctx, updateBlockQuery, pgx.StrictNamedArgs{
+			"id":       b.ID,
+			"game_id":  gameID,
+			"type":     b.Type,
+			"content":  b.Content,
+			"position": position,
+		})
+		if err != nil {
+			return GameDetail{}, classify(err)
+		}
+
+		if tag.RowsAffected() == 0 {
+			return GameDetail{}, &UnknownBlockError{ID: b.ID}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	return GetGameByID(ctx, pool, gameID, userID)
 }

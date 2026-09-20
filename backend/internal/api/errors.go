@@ -90,6 +90,7 @@ func (s *Server) writeStoreError(w http.ResponseWriter, err error) {
 
 func storeErrorResponse(err error) (int, string) {
 	var unknownFilter *store.UnknownFilterError
+	var unknownBlock *store.UnknownBlockError
 
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -97,6 +98,11 @@ func storeErrorResponse(err error) (int, string) {
 
 	case errors.As(err, &unknownFilter):
 		return http.StatusBadRequest, unknownFilter.Error()
+
+	// Named before the ErrInvalid case below, which it unwraps to: the generic
+	// branch would answer with the fallback and drop the id.
+	case errors.As(err, &unknownBlock):
+		return http.StatusUnprocessableEntity, unknownBlock.Error()
 
 	case errors.Is(err, store.ErrInUse):
 		return http.StatusConflict, message(err, inUseMessages, "still referenced by other records")
