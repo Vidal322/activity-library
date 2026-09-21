@@ -309,11 +309,11 @@ func checkFilterIDs(ctx context.Context, pool *pgxpool.Pool, filter GameFilter) 
 
 func unknownIDs(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	q rowsQuerier,
 	query string,
 	ids []string,
 ) ([]string, error) {
-	rows, err := pool.Query(ctx, query, ids)
+	rows, err := q.Query(ctx, query, ids)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -668,6 +668,10 @@ type rowQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+type rowsQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 func AuthorizeGameWrite(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -798,6 +802,82 @@ func EditGameBlocks(
 
 		if tag.RowsAffected() == 0 {
 			return GameDetail{}, &UnknownBlockError{ID: b.ID}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	return GetGameByID(ctx, pool, gameID, userID)
+}
+
+type UnknownCategoryError struct {
+	IDs []string
+}
+
+func (e *UnknownCategoryError) Error() string {
+	return "unknown category: " + strings.Join(e.IDs, ", ")
+}
+
+func (e *UnknownCategoryError) Unwrap() error {
+	return ErrInvalid
+}
+
+const (
+	deleteRemovedGameCategoriesQuery = `
+		DELETE FROM game_categories
+		WHERE game_id = @game_id
+		  AND NOT (category_id = ANY (@keep::uuid[]))`
+
+	insertGameCategoriesQuery = `
+		INSERT INTO game_categories (game_id, category_id)
+		SELECT @game_id, id FROM unnest(@category_ids::uuid[]) AS id
+		ON CONFLICT DO NOTHING`
+)
+
+func EditGameCategories(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameID string,
+	categoryIDs []string,
+	userID string,
+) (GameDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := authorizeGameWrite(ctx, tx, gameID, userID); err != nil {
+		return GameDetail{}, err
+	}
+
+	if len(categoryIDs) > 0 {
+		missing, err := unknownIDs(ctx, tx, unknownCategoryIDsQuery, categoryIDs)
+		if err != nil {
+			return GameDetail{}, err
+		}
+		if len(missing) > 0 {
+			return GameDetail{}, &UnknownCategoryError{IDs: missing}
+		}
+	}
+
+	_, err = tx.Exec(ctx, deleteRemovedGameCategoriesQuery, pgx.StrictNamedArgs{
+		"game_id": gameID,
+		"keep":    categoryIDs,
+	})
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	if len(categoryIDs) > 0 {
+		_, err = tx.Exec(ctx, insertGameCategoriesQuery, pgx.StrictNamedArgs{
+			"game_id":      gameID,
+			"category_ids": categoryIDs,
+		})
+		if err != nil {
+			return GameDetail{}, classify(err)
 		}
 	}
 

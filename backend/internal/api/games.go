@@ -574,3 +574,84 @@ func (s *Server) handleEditGameBlocks(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to write edit game blocks response", "error", err)
 	}
 }
+
+type editGameCategoriesRequest struct {
+	Categories *[]string `json:"categories"`
+}
+
+func (req editGameCategoriesRequest) validate() string {
+	if req.Categories == nil {
+		return "categories must be an array"
+	}
+
+	seen := make(map[string]bool, len(*req.Categories))
+
+	for i, id := range *req.Categories {
+		var parsed pgtype.UUID
+		if err := parsed.Scan(id); err != nil {
+			return fmt.Sprintf("categories[%d] is malformed", i)
+		}
+
+		// The list is a set, so a repeat says nothing the single mention did
+		// not. Refusing it beats quietly collapsing it: a client sending the
+		// same category twice is a client that has lost track of its own list.
+		if seen[id] {
+			return fmt.Sprintf("categories[%d] appears more than once", i)
+		}
+		seen[id] = true
+	}
+
+	return ""
+}
+
+func (req editGameCategoriesRequest) categoryIDs() []string {
+	ids := make([]string, 0, len(*req.Categories))
+
+	return append(ids, *req.Categories...)
+}
+
+// handleEditGameCategories serves PUT /v1/games/{id}/categories. The body is
+// the complete set: a category the list no longer names is one the game loses.
+func (s *Server) handleEditGameCategories(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		s.writeUnauthorized(w, msgNotAuthenticated)
+		return
+	}
+
+	gameID := chi.URLParam(r, "id")
+
+	var parsed pgtype.UUID
+	if err := parsed.Scan(gameID); err != nil {
+		s.writeBadRequest(w, "malformed game id")
+		return
+	}
+
+	err := store.AuthorizeGameWrite(r.Context(), s.pool, gameID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	var req editGameCategoriesRequest
+	if err := readJSON(w, r, &req); err != nil {
+		s.writeBadRequest(w, err.Error())
+		return
+	}
+
+	if msg := req.validate(); msg != "" {
+		s.writeUnprocessable(w, msg)
+		return
+	}
+
+	game, err := store.EditGameCategories(
+		r.Context(), s.pool, gameID, req.categoryIDs(), userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	if err := writeJSON(w, http.StatusOK, newGameDetail(game)); err != nil {
+		slog.Error("Failed to write edit game categories response", "error", err)
+	}
+}
