@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -473,6 +474,11 @@ func (s *Server) handleEditGame(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+var blockTypes = []string{
+	"paragraph", "steps", "bullet_points",
+	"table", "heading", "note", "image",
+}
+
 type blockInput struct {
 	ID      string `json:"id"`
 	Type    string `json:"type"`
@@ -491,6 +497,11 @@ func (req editGameBlocksRequest) validate() string {
 	seen := make(map[string]bool, len(*req.Blocks))
 
 	for i, b := range *req.Blocks {
+		if !slices.Contains(blockTypes, b.Type) {
+			return fmt.Sprintf("blocks[%d].type must be one of %s",
+				i, strings.Join(blockTypes, ", "))
+		}
+
 		if b.ID == "" {
 			continue
 		}

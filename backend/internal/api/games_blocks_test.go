@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Vidal322/activity-library/internal/store"
+	"github.com/Vidal322/activity-library/internal/testutil"
 )
 
 // PUT /v1/games/{id}/blocks replaces the list rather than patching it, so the
@@ -423,9 +426,49 @@ func TestHandleEditGameBlocksRefusesAMalformedID(t *testing.T) {
 	}
 }
 
-// TestHandleEditGameBlocksRefusesAnUnknownType leaves the list of types to
-// blocks_type_check, so this is really a test that the constraint's message
-// reaches the client instead of a 500.
+// TestBlockTypesMatchTheConstraint is the seam between blockTypes and
+// blocks_type_check. Nothing but this test holds the two together: a type added
+// to the migration and not to the slice is refused by the API that should allow
+// it, and one added to the slice and not to the migration turns the 422 below
+// back into the 500 the validation exists to remove.
+//
+// It reads the constraint back from the catalog rather than the .sql file, so
+// what it compares against is the rule the database is actually enforcing.
+func TestBlockTypesMatchTheConstraint(t *testing.T) {
+	pool := testutil.RequirePool(t)
+	ctx := testContext(t)
+
+	var def string
+	err := pool.QueryRow(ctx,
+		`SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		 WHERE conname = 'blocks_type_check'`,
+	).Scan(&def)
+	if err != nil {
+		t.Fatalf("could not read blocks_type_check: %v", err)
+	}
+
+	// pg_get_constraintdef prints the allowed values as quoted literals:
+	// CHECK ((type = ANY (ARRAY['paragraph'::text, 'steps'::text, ...]))).
+	// Every literal in there is a type, and there is nothing else quoted.
+	var inConstraint []string
+	for _, m := range regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(def, -1) {
+		inConstraint = append(inConstraint, m[1])
+	}
+
+	slices.Sort(inConstraint)
+	inGo := slices.Clone(blockTypes)
+	slices.Sort(inGo)
+
+	if !slices.Equal(inGo, inConstraint) {
+		t.Errorf("blockTypes = %v, want the constraint's %v (from %s)",
+			inGo, inConstraint, def)
+	}
+}
+
+// TestHandleEditGameBlocksRefusesAnUnknownType covers the type the schema has
+// never allowed. The handler refuses it by name before the transaction opens,
+// so the body names the types that would have worked rather than reporting a
+// constraint the client cannot read.
 func TestHandleEditGameBlocksRefusesAnUnknownType(t *testing.T) {
 	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
@@ -437,8 +480,16 @@ func TestHandleEditGameBlocksRefusesAnUnknownType(t *testing.T) {
 	if status != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusUnprocessableEntity, raw)
 	}
-	if !strings.Contains(string(raw), "unknown block type") {
-		t.Errorf("body = %s, want the constraint's message", raw)
+	// The point of validating ahead of the constraint is the list: a client
+	// that sent the wrong type learns which ones are right.
+	for _, want := range blockTypes {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("body = %s, want it to name the valid type %s", raw, want)
+		}
+	}
+
+	if !strings.Contains(string(raw), "blocks[0].type") {
+		t.Errorf("body = %s, want it to point at the block that was wrong", raw)
 	}
 
 	if stored := readBlocks(t, ctx, pool, blockGame); len(stored) != 5 {
