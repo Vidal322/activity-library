@@ -812,16 +812,41 @@ func EditGameBlocks(
 	return GetGameByID(ctx, pool, gameID, userID)
 }
 
-type UnknownCategoryError struct {
-	IDs []string
+// UnknownAssociationError names ids a replace listed that is not present in any row.
+// It unwraps to ErrInvalid
+type UnknownAssociationError struct {
+	Field string
+	IDs   []string
 }
 
-func (e *UnknownCategoryError) Error() string {
-	return "unknown category: " + strings.Join(e.IDs, ", ")
+func (e *UnknownAssociationError) Error() string {
+	return "unknown " + e.Field + ": " + strings.Join(e.IDs, ", ")
 }
 
-func (e *UnknownCategoryError) Unwrap() error {
+func (e *UnknownAssociationError) Unwrap() error {
 	return ErrInvalid
+}
+
+// checkAssociationIDs rejects the whole list if any id is absent.
+func checkAssociationIDs(
+	ctx context.Context,
+	q rowsQuerier,
+	query, field string,
+	ids []string,
+) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	missing, err := unknownIDs(ctx, q, query, ids)
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		return &UnknownAssociationError{Field: field, IDs: missing}
+	}
+
+	return nil
 }
 
 const (
@@ -853,14 +878,9 @@ func EditGameCategories(
 		return GameDetail{}, err
 	}
 
-	if len(categoryIDs) > 0 {
-		missing, err := unknownIDs(ctx, tx, unknownCategoryIDsQuery, categoryIDs)
-		if err != nil {
-			return GameDetail{}, err
-		}
-		if len(missing) > 0 {
-			return GameDetail{}, &UnknownCategoryError{IDs: missing}
-		}
+	err = checkAssociationIDs(ctx, tx, unknownCategoryIDsQuery, "category", categoryIDs)
+	if err != nil {
+		return GameDetail{}, err
 	}
 
 	_, err = tx.Exec(ctx, deleteRemovedGameCategoriesQuery, pgx.StrictNamedArgs{
@@ -875,6 +895,65 @@ func EditGameCategories(
 		_, err = tx.Exec(ctx, insertGameCategoriesQuery, pgx.StrictNamedArgs{
 			"game_id":      gameID,
 			"category_ids": categoryIDs,
+		})
+		if err != nil {
+			return GameDetail{}, classify(err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	return GetGameByID(ctx, pool, gameID, userID)
+}
+
+const (
+	deleteRemovedGameLocationsQuery = `
+		DELETE FROM game_locations
+		WHERE game_id = @game_id
+		  AND NOT (location_id = ANY (@keep::uuid[]))`
+
+	insertGameLocationsQuery = `
+		INSERT INTO game_locations (game_id, location_id)
+		SELECT @game_id, id FROM unnest(@location_ids::uuid[]) AS id
+		ON CONFLICT DO NOTHING`
+)
+
+func EditGameLocations(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameID string,
+	locationIDs []string,
+	userID string,
+) (GameDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := authorizeGameWrite(ctx, tx, gameID, userID); err != nil {
+		return GameDetail{}, err
+	}
+
+	err = checkAssociationIDs(ctx, tx, unknownLocationIDsQuery, "location", locationIDs)
+	if err != nil {
+		return GameDetail{}, err
+	}
+
+	_, err = tx.Exec(ctx, deleteRemovedGameLocationsQuery, pgx.StrictNamedArgs{
+		"game_id": gameID,
+		"keep":    locationIDs,
+	})
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	if len(locationIDs) > 0 {
+		_, err = tx.Exec(ctx, insertGameLocationsQuery, pgx.StrictNamedArgs{
+			"game_id":      gameID,
+			"location_ids": locationIDs,
 		})
 		if err != nil {
 			return GameDetail{}, classify(err)

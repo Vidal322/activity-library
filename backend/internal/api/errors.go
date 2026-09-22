@@ -91,7 +91,7 @@ func (s *Server) writeStoreError(w http.ResponseWriter, err error) {
 func storeErrorResponse(err error) (int, string) {
 	var unknownFilter *store.UnknownFilterError
 	var unknownBlock *store.UnknownBlockError
-	var unknownCategory *store.UnknownCategoryError
+	var unknownAssociation *store.UnknownAssociationError
 
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -103,8 +103,8 @@ func storeErrorResponse(err error) (int, string) {
 	case errors.As(err, &unknownBlock):
 		return http.StatusUnprocessableEntity, unknownBlock.Error()
 
-	case errors.As(err, &unknownCategory):
-		return http.StatusUnprocessableEntity, unknownCategory.Error()
+	case errors.As(err, &unknownAssociation):
+		return http.StatusUnprocessableEntity, unknownAssociation.Error()
 
 	case errors.Is(err, store.ErrInUse):
 		return http.StatusConflict, message(err, inUseMessages, "still referenced by other records")
