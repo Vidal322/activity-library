@@ -279,6 +279,11 @@ const (
 		SELECT id FROM unnest($1::uuid[]) AS id
 		EXCEPT
 		SELECT id FROM locations`
+
+	unknownMaterialIDsQuery = `
+		SELECT id FROM unnest($1::uuid[]) AS id
+		EXCEPT
+		SELECT id FROM materials`
 )
 
 // checkFilterIDs rejects the whole filter if any id is absent. It costs one
@@ -868,6 +873,13 @@ func EditGameCategories(
 	categoryIDs []string,
 	userID string,
 ) (GameDetail, error) {
+	// A nil slice reaches Postgres as NULL, and NOT (x = ANY (NULL)) is NULL
+	// rather than true: the delete below would match nothing and the replace
+	// would silently keep the set it was asked to clear.
+	if categoryIDs == nil {
+		categoryIDs = []string{}
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return GameDetail{}, classify(err)
@@ -927,6 +939,13 @@ func EditGameLocations(
 	locationIDs []string,
 	userID string,
 ) (GameDetail, error) {
+	// A nil slice reaches Postgres as NULL, and NOT (x = ANY (NULL)) is NULL
+	// rather than true: the delete below would match nothing and the replace
+	// would silently keep the set it was asked to clear.
+	if locationIDs == nil {
+		locationIDs = []string{}
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return GameDetail{}, classify(err)
@@ -954,6 +973,98 @@ func EditGameLocations(
 		_, err = tx.Exec(ctx, insertGameLocationsQuery, pgx.StrictNamedArgs{
 			"game_id":      gameID,
 			"location_ids": locationIDs,
+		})
+		if err != nil {
+			return GameDetail{}, classify(err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	return GetGameByID(ctx, pool, gameID, userID)
+}
+
+type GameMaterialInput struct {
+	ID                     string
+	QuantityBase           int32
+	QuantityPerParticipant int32
+	Optional               bool
+}
+
+const (
+	deleteRemovedGameMaterialsQuery = `
+		DELETE FROM game_materials
+		WHERE game_id = @game_id
+		  AND NOT (material_id = ANY (@keep::uuid[]))`
+
+	insertGameMaterialsQuery = `
+		INSERT INTO game_materials (
+			game_id, material_id,
+			quantity_base, quantity_per_participant, optional)
+		SELECT @game_id, m.id,
+		       m.quantity_base, m.quantity_per_participant, m.optional
+		FROM unnest(
+			@material_ids::uuid[],
+			@quantity_base::int[],
+			@quantity_per_participant::int[],
+			@optional::bool[]
+		) AS m(id, quantity_base, quantity_per_participant, optional)
+		ON CONFLICT (game_id, material_id) DO UPDATE
+		SET quantity_base            = EXCLUDED.quantity_base,
+		    quantity_per_participant = EXCLUDED.quantity_per_participant,
+		    optional                 = EXCLUDED.optional`
+)
+
+func EditGameMaterials(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameID string,
+	materials []GameMaterialInput,
+	userID string,
+) (GameDetail, error) {
+	ids := make([]string, 0, len(materials))
+	base := make([]int32, 0, len(materials))
+	perParticipant := make([]int32, 0, len(materials))
+	optional := make([]bool, 0, len(materials))
+
+	for _, m := range materials {
+		ids = append(ids, m.ID)
+		base = append(base, m.QuantityBase)
+		perParticipant = append(perParticipant, m.QuantityPerParticipant)
+		optional = append(optional, m.Optional)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := authorizeGameWrite(ctx, tx, gameID, userID); err != nil {
+		return GameDetail{}, err
+	}
+
+	if err := checkAssociationIDs(ctx, tx, unknownMaterialIDsQuery, "material", ids); err != nil {
+		return GameDetail{}, err
+	}
+
+	_, err = tx.Exec(ctx, deleteRemovedGameMaterialsQuery, pgx.StrictNamedArgs{
+		"game_id": gameID,
+		"keep":    ids,
+	})
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	if len(materials) > 0 {
+		_, err = tx.Exec(ctx, insertGameMaterialsQuery, pgx.StrictNamedArgs{
+			"game_id":                  gameID,
+			"material_ids":             ids,
+			"quantity_base":            base,
+			"quantity_per_participant": perParticipant,
+			"optional":                 optional,
 		})
 		if err != nil {
 			return GameDetail{}, classify(err)

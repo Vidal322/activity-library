@@ -716,3 +716,107 @@ func (s *Server) handleEditGameLocations(w http.ResponseWriter, r *http.Request)
 		slog.Error("Failed to write edit game locations response", "error", err)
 	}
 }
+
+type materialInput struct {
+	ID                     string `json:"id"`
+	QuantityBase           int32  `json:"quantity_base"`
+	QuantityPerParticipant int32  `json:"quantity_per_participant"`
+	Optional               bool   `json:"optional"`
+}
+
+type editGameMaterialsRequest struct {
+	Materials *[]materialInput `json:"materials"`
+}
+
+func (req editGameMaterialsRequest) validate() string {
+	if req.Materials == nil {
+		return "materials must be an array"
+	}
+
+	seen := make(map[string]bool, len(*req.Materials))
+
+	for i, m := range *req.Materials {
+		var parsed pgtype.UUID
+		if err := parsed.Scan(m.ID); err != nil {
+			return fmt.Sprintf("materials[%d].id is malformed", i)
+		}
+
+		if seen[m.ID] {
+			return fmt.Sprintf("materials[%d].id appears more than once", i)
+		}
+		seen[m.ID] = true
+
+		switch {
+		case m.QuantityBase < 0:
+			return fmt.Sprintf("materials[%d].quantity_base must not be negative", i)
+
+		case m.QuantityPerParticipant < 0:
+			return fmt.Sprintf(
+				"materials[%d].quantity_per_participant must not be negative", i)
+
+		case m.QuantityBase == 0 && m.QuantityPerParticipant == 0:
+			return fmt.Sprintf(
+				"materials[%d] must resolve to at least one item", i)
+		}
+	}
+
+	return ""
+}
+
+func (req editGameMaterialsRequest) materials() []store.GameMaterialInput {
+	materials := make([]store.GameMaterialInput, 0, len(*req.Materials))
+	for _, m := range *req.Materials {
+		materials = append(materials, store.GameMaterialInput{
+			ID:                     m.ID,
+			QuantityBase:           m.QuantityBase,
+			QuantityPerParticipant: m.QuantityPerParticipant,
+			Optional:               m.Optional,
+		})
+	}
+
+	return materials
+}
+
+func (s *Server) handleEditGameMaterials(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		s.writeUnauthorized(w, msgNotAuthenticated)
+		return
+	}
+
+	gameID := chi.URLParam(r, "id")
+
+	var parsed pgtype.UUID
+	if err := parsed.Scan(gameID); err != nil {
+		s.writeBadRequest(w, "malformed game id")
+		return
+	}
+
+	err := store.AuthorizeGameWrite(r.Context(), s.pool, gameID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	var req editGameMaterialsRequest
+	if err := readJSON(w, r, &req); err != nil {
+		s.writeBadRequest(w, err.Error())
+		return
+	}
+
+	if msg := req.validate(); msg != "" {
+		s.writeUnprocessable(w, msg)
+		return
+	}
+
+	game, err := store.EditGameMaterials(
+		r.Context(), s.pool, gameID, req.materials(), userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	if err := writeJSON(w, http.StatusOK, newGameDetail(game)); err != nil {
+		slog.Error("Failed to write edit game materials response", "error", err)
+	}
+}
