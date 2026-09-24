@@ -14,7 +14,7 @@ import (
 
 // sentinels lets a case assert the result matches exactly one of them. Checking
 // only the expected sentinel would pass an error that matched two.
-var sentinels = []error{ErrNotFound, ErrConflict, ErrInvalid, ErrInUse}
+var sentinels = []error{ErrNotFound, ErrConflict, ErrInvalid, ErrInUse, ErrReferenced}
 
 // assertClassified checks the three things a caller depends on: the error is
 // unchanged when nothing recognised it, it matches the one expected sentinel,
@@ -164,6 +164,49 @@ func TestClassifyDelete(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := classifyDelete(tt.in)
+			assertClassified(t, tt.in, got, tt.wantSentinel, tt.wantConstraint)
+		})
+	}
+}
+
+func TestClassifyUpdate(t *testing.T) {
+	tests := []struct {
+		name           string
+		in             error
+		wantSentinel   error
+		wantConstraint string
+	}{
+		{
+			// Setting games.no_materials under existing game_materials rows.
+			// The insert that runs into the same constraint reads as invalid.
+			name:           "foreign key violation means still referenced",
+			in:             &pgconn.PgError{Code: "23503", ConstraintName: "game_materials_game_fkey"},
+			wantSentinel:   ErrReferenced,
+			wantConstraint: "game_materials_game_fkey",
+		},
+		{
+			name:           "check violation is still invalid",
+			in:             &pgconn.PgError{Code: "23514", ConstraintName: "games_duration_range"},
+			wantSentinel:   ErrInvalid,
+			wantConstraint: "games_duration_range",
+		},
+		{
+			name:         "no rows is still not found",
+			in:           pgx.ErrNoRows,
+			wantSentinel: ErrNotFound,
+		},
+		{
+			name: "nil stays nil",
+		},
+		{
+			name: "non-database error passes through",
+			in:   errors.New("dial tcp: connection refused"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyUpdate(tt.in)
 			assertClassified(t, tt.in, got, tt.wantSentinel, tt.wantConstraint)
 		})
 	}

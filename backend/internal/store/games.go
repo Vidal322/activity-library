@@ -617,8 +617,6 @@ func (e GameEdit) assignments() ([]string, pgx.StrictNamedArgs) {
 			continue
 		}
 
-		// The column names its own argument, so a field that stays absent
-		// leaves no trace in either the clause or the arguments.
 		args[f.column] = f.value.Arg()
 		sets = append(sets, f.column+" = @"+f.column)
 	}
@@ -650,7 +648,7 @@ func EditGame(
 
 	tag, err := pool.Exec(ctx, query, args)
 	if err != nil {
-		return GameDetail{}, classify(err)
+		return GameDetail{}, classifyUpdate(err)
 	}
 
 	if tag.RowsAffected() == 0 {
