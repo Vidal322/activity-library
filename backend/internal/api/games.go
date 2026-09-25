@@ -820,3 +820,62 @@ func (s *Server) handleEditGameMaterials(w http.ResponseWriter, r *http.Request)
 		slog.Error("Failed to write edit game materials response", "error", err)
 	}
 }
+
+func (s *Server) handlePublishGame(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	gameID := chi.URLParam(r, "id")
+	var parsed pgtype.UUID
+	if err := parsed.Scan(gameID); err != nil {
+		s.writeBadRequest(w, "malformed game id")
+		return
+	}
+	userID, _ := userIDFromContext(ctx)
+
+	err := store.AuthorizeGameWrite(ctx, s.pool, gameID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	game, err := store.PublishGame(ctx, s.pool, gameID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	err = writeJSON(w, http.StatusOK, newGameDetail(game))
+	if err != nil {
+		slog.Error("Failed to write publish game response", "error", err)
+	}
+
+}
+
+func (s *Server) handleUnpublishGame(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	gameID := chi.URLParam(r, "id")
+	userID, _ := userIDFromContext(ctx)
+
+	var parsed pgtype.UUID
+	if err := parsed.Scan(gameID); err != nil {
+		s.writeBadRequest(w, "malformed game id")
+		return
+	}
+
+	err := store.AuthorizeGameWrite(ctx, s.pool, gameID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	game, err := store.UnpublishGame(ctx, s.pool, gameID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	err = writeJSON(w, http.StatusOK, newGameDetail(game))
+	if err != nil {
+		slog.Error("Failed to write unpublish game response", "error", err)
+	}
+
+}

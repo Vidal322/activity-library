@@ -43,6 +43,8 @@ func (s *Server) routes() http.Handler {
 			r.Put("/games/{id}/categories", s.handleEditGameCategories)
 			r.Put("/games/{id}/locations", s.handleEditGameLocations)
 			r.Put("/games/{id}/materials", s.handleEditGameMaterials)
+			r.Post("/games/{id}/publish", s.handlePublishGame)
+			r.Post("/games/{id}/unpublish", s.handleUnpublishGame)
 			r.Get("/categories", s.handleCategoriesList)
 			r.Get("/locations", s.handleLocationsList)
 			r.Get("/materials", s.handleMaterialsList)

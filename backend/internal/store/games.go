@@ -1077,3 +1077,51 @@ func EditGameMaterials(
 
 	return GetGameByID(ctx, pool, gameID, userID)
 }
+
+const setPublishStateQuery = `
+	UPDATE games
+	SET publish_state = @state
+	WHERE id = @game_id`
+
+// setPublishState moves a game between 'draft' and 'published'. The state is
+// the caller's and never the request's, so only the two wrappers below decide
+// what can reach the CHECK constraint.
+func setPublishState(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameID string,
+	userID string,
+	state string,
+) (GameDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := authorizeGameWrite(ctx, tx, gameID, userID); err != nil {
+		return GameDetail{}, err
+	}
+
+	_, err = tx.Exec(ctx, setPublishStateQuery, pgx.StrictNamedArgs{
+		"game_id": gameID,
+		"state":   state,
+	})
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	return GetGameByID(ctx, pool, gameID, userID)
+}
+
+func PublishGame(ctx context.Context, pool *pgxpool.Pool, gameID string, userID string) (GameDetail, error) {
+	return setPublishState(ctx, pool, gameID, userID, "published")
+}
+
+func UnpublishGame(ctx context.Context, pool *pgxpool.Pool, gameID string, userID string) (GameDetail, error) {
+	return setPublishState(ctx, pool, gameID, userID, "draft")
+}
