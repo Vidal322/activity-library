@@ -64,7 +64,11 @@ var invalidMessages = map[string]string{
 	"game_inspirations_game_id_fkey":        "unknown game",
 	"game_inspirations_inspiration_id_fkey": "unknown inspiration game",
 	"game_materials_material_id_fkey":       "unknown material",
-	"game_materials_game_fkey":              "unknown game, or the game is marked as needing no materials",
+	"game_materials_game_fkey":              "this game is marked as needing no materials; unset no_materials before adding any",
+}
+
+var referencedMessages = map[string]string{
+	"game_materials_game_fkey": "this game still lists materials; remove them before marking it as needing no materials",
 }
 
 var inUseMessages = map[string]string{
@@ -108,6 +112,13 @@ func storeErrorResponse(err error) (int, string) {
 
 	case errors.Is(err, store.ErrInUse):
 		return http.StatusConflict, message(err, inUseMessages, "still referenced by other records")
+
+	case errors.Is(err, store.ErrReferenced):
+		return http.StatusUnprocessableEntity, message(
+			err,
+			referencedMessages,
+			"still referenced by other records",
+		)
 
 	case errors.Is(err, store.ErrConflict):
 		return http.StatusConflict, message(err, conflictMessages, "already exists")

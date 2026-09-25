@@ -79,6 +79,27 @@ func TestStoreErrorResponse(t *testing.T) {
 			wantMsg:    "that user still has games",
 		},
 		{
+			// The no_materials pair: the insert of a material row and the
+			// update of the flag both trip game_materials_game_fkey, from
+			// opposite ends, and each needs to be told what to undo.
+			name:       "material on a game marked as needing none",
+			in:         &store.ConstraintError{Constraint: "game_materials_game_fkey", Sentinel: store.ErrInvalid},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantMsg:    "this game is marked as needing no materials; unset no_materials before adding any",
+		},
+		{
+			name:       "no_materials on a game that lists materials",
+			in:         &store.ConstraintError{Constraint: "game_materials_game_fkey", Sentinel: store.ErrReferenced},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantMsg:    "this game still lists materials; remove them before marking it as needing no materials",
+		},
+		{
+			name:       "bare referenced uses the generic wording",
+			in:         store.ErrReferenced,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantMsg:    "still referenced by other records",
+		},
+		{
 			// Raised by the deferred trigger, which reports itself as a check
 			// violation under this name.
 			name:       "game without an author",

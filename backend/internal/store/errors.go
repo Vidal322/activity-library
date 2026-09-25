@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	ErrNotFound  = errors.New("not found")
-	ErrConflict  = errors.New("conflict")
-	ErrInvalid   = errors.New("invalid")
-	ErrInUse     = errors.New("in use")
-	ErrForbidden = errors.New("forbidden")
+	ErrNotFound   = errors.New("not found")
+	ErrConflict   = errors.New("conflict")
+	ErrInvalid    = errors.New("invalid")
+	ErrInUse      = errors.New("in use")
+	ErrReferenced = errors.New("still referenced")
+	ErrForbidden  = errors.New("forbidden")
 )
 
 type ConstraintError struct {
@@ -66,6 +67,14 @@ func classifyDelete(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
 		return constraintErr(pgErr.ConstraintName, ErrInUse)
+	}
+	return classify(err)
+}
+
+func classifyUpdate(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
+		return constraintErr(pgErr.ConstraintName, ErrReferenced)
 	}
 	return classify(err)
 }
