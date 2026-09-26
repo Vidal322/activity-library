@@ -13,6 +13,7 @@ const (
 	msgNotAuthenticated   = "authentication required"
 	msgForbidden          = "you did not write this game"
 	msgInternalError      = "internal server error"
+	msgIncompleteDraft    = "this draft is not ready to publish"
 )
 
 var conflictMessages = map[string]string{
@@ -154,6 +155,17 @@ func (s *Server) writeBadRequest(w http.ResponseWriter, msg string) {
 func (s *Server) writeUnprocessable(w http.ResponseWriter, msg string) {
 	if err := writeErrorJSON(w, http.StatusUnprocessableEntity, msg); err != nil {
 		slog.Error("Failed to write unprocessable entity response", "error", err)
+	}
+}
+
+func (s *Server) writeIncomplete(w http.ResponseWriter, failures []string) {
+	body := struct {
+		Error   string   `json:"error"`
+		Details []string `json:"details"`
+	}{msgIncompleteDraft, failures}
+
+	if err := writeJSON(w, http.StatusUnprocessableEntity, body); err != nil {
+		slog.Error("Failed to write incomplete draft response", "error", err)
 	}
 }
 

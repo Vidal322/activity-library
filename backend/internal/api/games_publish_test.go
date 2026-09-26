@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -31,12 +32,34 @@ const publishGameID = testGamePublishedOlder
 func seedPublishFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, state string) {
 	t.Helper()
 
+	seedDraft(t, ctx, pool, state, draftParts{
+		description: "Two teams, one handkerchief",
+		category:    true,
+		block:       true,
+	})
+}
+
+type draftParts struct {
+	description string
+	category    bool
+	block       bool
+}
+
+func seedDraft(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	state string,
+	parts draftParts,
+) {
+	t.Helper()
+
 	insertAuthor(t, ctx, pool, testAuthorID)
 
 	insertGame(t, ctx, pool, testGame{
 		ID:              publishGameID,
 		Title:           "Jogo do Lenço",
-		Description:     "Two teams, one handkerchief",
+		Description:     parts.description,
 		MinParticipants: ptr(int32(6)),
 		MaxParticipants: ptr(int32(30)),
 		DurationMin:     ptr(int32(15)),
@@ -45,6 +68,28 @@ func seedPublishFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 		CreatedAt:       time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
 		Authors:         []string{testSessionUserID},
 	})
+
+	if parts.category {
+		insertCategory(t, ctx, pool, gameCategory{
+			ID:           testCategoryIcebreaker,
+			Name:         "Icebreaker",
+			Description:  "Opens a group that has just met.",
+			Active:       true,
+			DisplayOrder: 1,
+			FamilyID:     testFamilyPurpose,
+			FamilyName:   "Purpose",
+		}, 1)
+		linkGameCategory(t, ctx, pool, publishGameID, testCategoryIcebreaker)
+	}
+
+	if parts.block {
+		insertBlock(t, ctx, pool, publishGameID, gameBlock{
+			ID:       testBlockSteps,
+			Type:     "steps",
+			Content:  "Split into two teams and line them up.",
+			Position: 0,
+		})
+	}
 }
 
 // postPublish returns the response untouched, for the tests asserting on a
@@ -331,4 +376,106 @@ func TestSetPublishStateRefusesANonAuthor(t *testing.T) {
 	if stored := publishStateOf(t, ctx, pool, testGamePublishedNewer); stored != "published" {
 		t.Errorf("games.publish_state = %q, want it left at %q", stored, "published")
 	}
+}
+
+func refusePublish(t *testing.T, baseURL, id string) []string {
+	t.Helper()
+
+	status, raw := postPublish(t, baseURL, id, "publish")
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d (body %s)",
+			status, http.StatusUnprocessableEntity, raw)
+	}
+
+	var got struct {
+		Error   string   `json:"error"`
+		Details []string `json:"details"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+
+	if got.Error != msgIncompleteDraft {
+		t.Errorf("error = %q, want %q", got.Error, msgIncompleteDraft)
+	}
+
+	return got.Details
+}
+
+func TestHandlePublishGameReportsEveryFailedPrecondition(t *testing.T) {
+	srv, pool := newAuthedTestServer(t)
+	ctx := testContext(t)
+
+	seedDraft(t, ctx, pool, "draft", draftParts{})
+
+	got := refusePublish(t, srv.URL, publishGameID)
+
+	want := []string{
+		"a published game needs at least one block",
+		"a published game needs at least one category",
+		"a published game needs a description",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("details = %q, want %q", got, want)
+	}
+
+	if stored := publishStateOf(t, ctx, pool, publishGameID); stored != "draft" {
+		t.Errorf("games.publish_state = %q, want it left at %q", stored, "draft")
+	}
+}
+
+func TestHandlePublishGameReportsEachPreconditionOnItsOwn(t *testing.T) {
+	const description = "Two teams, one handkerchief"
+
+	cases := []struct {
+		name  string
+		parts draftParts
+		want  string
+	}{
+		{
+			name:  "no blocks",
+			parts: draftParts{description: description, category: true},
+			want:  "a published game needs at least one block",
+		},
+		{
+			name:  "no categories",
+			parts: draftParts{description: description, block: true},
+			want:  "a published game needs at least one category",
+		},
+		{
+			name:  "no description",
+			parts: draftParts{description: "   ", category: true, block: true},
+			want:  "a published game needs a description",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, pool := newAuthedTestServer(t)
+			ctx := testContext(t)
+
+			seedDraft(t, ctx, pool, "draft", tc.parts)
+
+			got := refusePublish(t, srv.URL, publishGameID)
+
+			if !slices.Equal(got, []string{tc.want}) {
+				t.Errorf("details = %q, want only %q", got, tc.want)
+			}
+
+			if stored := publishStateOf(t, ctx, pool, publishGameID); stored != "draft" {
+				t.Errorf("games.publish_state = %q, want it left at %q", stored, "draft")
+			}
+		})
+	}
+}
+
+func TestHandleUnpublishGameIgnoresThePreconditions(t *testing.T) {
+	srv, pool := newAuthedTestServer(t)
+	ctx := testContext(t)
+
+	seedDraft(t, ctx, pool, "published", draftParts{})
+
+	got := setPublished(t, srv.URL, publishGameID, "unpublish")
+
+	assertPublishState(t, ctx, pool, got, "draft")
 }

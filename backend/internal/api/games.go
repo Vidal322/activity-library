@@ -821,6 +821,22 @@ func (s *Server) handleEditGameMaterials(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+func publishPreconditions(game store.GameDetail) []string {
+	var failures []string
+
+	if len(game.Blocks) == 0 {
+		failures = append(failures, "a published game needs at least one block")
+	}
+	if len(game.Categories) == 0 {
+		failures = append(failures, "a published game needs at least one category")
+	}
+	if strings.TrimSpace(game.Description) == "" {
+		failures = append(failures, "a published game needs a description")
+	}
+
+	return failures
+}
+
 func (s *Server) handlePublishGame(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	gameID := chi.URLParam(r, "id")
@@ -834,6 +850,17 @@ func (s *Server) handlePublishGame(w http.ResponseWriter, r *http.Request) {
 	err := store.AuthorizeGameWrite(ctx, s.pool, gameID, userID)
 	if err != nil {
 		s.writeStoreError(w, err)
+		return
+	}
+
+	draft, err := store.GetGameByID(ctx, s.pool, gameID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	if failures := publishPreconditions(draft); len(failures) > 0 {
+		s.writeIncomplete(w, failures)
 		return
 	}
 
