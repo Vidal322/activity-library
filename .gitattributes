@@ -1,0 +1,4 @@
+# Line endings are a property of this repository, not of the machine that
+# cloned it: without this, core.autocrlf decides, and a Windows checkout
+# produces CRLF working-tree files that gofmt reports as unformatted.
+* text=auto eol=lf
