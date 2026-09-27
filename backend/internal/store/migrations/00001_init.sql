@@ -347,7 +347,7 @@ $$ LANGUAGE plpgsql;
 -- +goose StatementEnd
 
 CREATE TRIGGER blocks_refresh_search
-    AFTER INSERT OR DELETE OR UPDATE OF content, type, game_id ON blocks
+    AFTER INSERT OR DELETE OR UPDATE OF content, type, game_id, position ON blocks
     FOR EACH ROW EXECUTE FUNCTION blocks_refresh_search();
 
 -- +goose Down
