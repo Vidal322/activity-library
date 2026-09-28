@@ -551,6 +551,16 @@ func CreateDraft(
 		return GameDetail{}, classify(err)
 	}
 
+	return creditAuthor(ctx, pool, tx, game, authorID)
+}
+
+func creditAuthor(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	tx pgx.Tx,
+	game Game,
+	authorID string,
+) (GameDetail, error) {
 	if _, err := tx.Exec(ctx, createDraftAuthorQuery, game.ID, authorID); err != nil {
 		return GameDetail{}, classify(err)
 	}
@@ -572,6 +582,63 @@ func CreateDraft(
 		Materials:  []GameMaterial{},
 		Blocks:     []GameBlock{},
 	}, nil
+}
+
+const createVariantQuery = `
+	INSERT INTO games (
+		title, description, image,
+		min_participants, max_participants, duration_min, duration_max,
+		no_materials, publish_state, original_id)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9)
+	RETURNING id, title, description, image,
+	          min_participants, max_participants,
+	          duration_min, duration_max,
+	          no_materials, publish_state, created_at`
+
+// CreateVariant creates a draft derived from originalID. The variant is the
+// caller's own game: the original's authors are not credited on it, and the
+// caller needs no more than sight of the original, since branching from a game
+// reads it rather than changes it.
+//
+// A variant of a variant is refused by games_original_not_variant_fkey. The
+// rule is left to the schema rather than checked first: the composite foreign
+// key is what makes one level the only level even under a concurrent insert,
+// and classify turns its violation into ErrInvalid naming the constraint.
+func CreateVariant(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	originalID string,
+	draft Draft,
+	authorID string,
+) (GameDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Checked before the insert so an original the caller cannot see answers
+	// 404 rather than creating a variant of a stranger's draft: the foreign
+	// key only knows whether the row exists, not who may read it.
+	if err := requireVisibleGame(ctx, tx, originalID, authorID); err != nil {
+		return GameDetail{}, err
+	}
+
+	rows, err := tx.Query(ctx, createVariantQuery,
+		draft.Title, draft.Description, draft.Image,
+		draft.MinParticipants, draft.MaxParticipants,
+		draft.DurationMin, draft.DurationMax,
+		draft.NoMaterials, originalID)
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	game, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[Game])
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	return creditAuthor(ctx, pool, tx, game, authorID)
 }
 
 // Optional used to distinguish absent from nul
@@ -673,6 +740,31 @@ type rowQuerier interface {
 
 type rowsQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+const gameVisibleQuery = `
+	SELECT true
+	FROM games g
+	WHERE g.id = @game_id
+	  AND` + gameVisibility
+
+func requireVisibleGame(
+	ctx context.Context,
+	q rowQuerier,
+	gameID string,
+	userID string,
+) error {
+	var visible bool
+
+	err := q.QueryRow(ctx, gameVisibleQuery, pgx.StrictNamedArgs{
+		"game_id":   gameID,
+		"viewer_id": userID,
+	}).Scan(&visible)
+	if err != nil {
+		return classify(err)
+	}
+
+	return nil
 }
 
 func AuthorizeGameWrite(

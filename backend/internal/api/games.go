@@ -369,6 +369,48 @@ func (s *Server) handleCreateDraft(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleCreateVariant(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		s.writeUnauthorized(w, msgNotAuthenticated)
+		return
+	}
+
+	originalID := chi.URLParam(r, "id")
+
+	var parsed pgtype.UUID
+	if err := parsed.Scan(originalID); err != nil {
+		s.writeBadRequest(w, "malformed game id")
+		return
+	}
+
+	var req createDraftRequest
+	if err := readJSON(w, r, &req); err != nil {
+		s.writeBadRequest(w, err.Error())
+		return
+	}
+
+	req.Title = strings.TrimSpace(req.Title)
+	req.Description = strings.TrimSpace(req.Description)
+
+	if msg := req.validate(); msg != "" {
+		s.writeUnprocessable(w, msg)
+		return
+	}
+
+	game, err := store.CreateVariant(r.Context(), s.pool, originalID, req.draft(), userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	w.Header().Set("Location", apiPrefix+"/games/"+game.ID)
+
+	if err := writeJSON(w, http.StatusCreated, newGameDetail(game)); err != nil {
+		slog.Error("Failed to write create variant response", "error", err)
+	}
+}
+
 type editGameRequest struct {
 	Title           optional.Value[string] `json:"title"`
 	Description     optional.Value[string] `json:"description"`
