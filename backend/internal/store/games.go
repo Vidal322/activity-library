@@ -517,10 +517,7 @@ const createDraftQuery = `
 		min_participants, max_participants, duration_min, duration_max,
 		no_materials, publish_state)
 	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft')
-	RETURNING id, title, description, image,
-	          min_participants, max_participants,
-	          duration_min, duration_max,
-	          no_materials, publish_state, created_at`
+	RETURNING id`
 
 const createDraftAuthorQuery = `
 	INSERT INTO game_authors (game_id, user_id) VALUES ($1, $2)`
@@ -537,31 +534,30 @@ func CreateDraft(
 	}
 	defer tx.Rollback(ctx)
 
-	rows, err := tx.Query(ctx, createDraftQuery,
+	var gameID string
+	err = tx.QueryRow(ctx, createDraftQuery,
 		draft.Title, draft.Description, draft.Image,
 		draft.MinParticipants, draft.MaxParticipants,
 		draft.DurationMin, draft.DurationMax,
-		draft.NoMaterials)
+		draft.NoMaterials).Scan(&gameID)
 	if err != nil {
 		return GameDetail{}, classify(err)
 	}
 
-	game, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[Game])
-	if err != nil {
-		return GameDetail{}, classify(err)
-	}
-
-	return creditAuthor(ctx, pool, tx, game, authorID)
+	return creditAuthor(ctx, pool, tx, gameID, authorID)
 }
 
+// creditAuthor credits the caller on a game just inserted in tx, commits, and
+// reads the game back through GetGameByID, so a created game answers in the
+// same shape as every other read of one.
 func creditAuthor(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	tx pgx.Tx,
-	game Game,
+	gameID string,
 	authorID string,
 ) (GameDetail, error) {
-	if _, err := tx.Exec(ctx, createDraftAuthorQuery, game.ID, authorID); err != nil {
+	if _, err := tx.Exec(ctx, createDraftAuthorQuery, gameID, authorID); err != nil {
 		return GameDetail{}, classify(err)
 	}
 
@@ -569,19 +565,7 @@ func creditAuthor(
 		return GameDetail{}, classify(err)
 	}
 
-	byGame, err := authorsByGame(ctx, pool, []string{game.ID})
-	if err != nil {
-		return GameDetail{}, err
-	}
-	game.Authors = byGame[game.ID]
-
-	return GameDetail{
-		Game:       game,
-		Categories: []GameCategory{},
-		Locations:  []Location{},
-		Materials:  []GameMaterial{},
-		Blocks:     []GameBlock{},
-	}, nil
+	return GetGameByID(ctx, pool, gameID, authorID)
 }
 
 const createVariantQuery = `
@@ -590,20 +574,8 @@ const createVariantQuery = `
 		min_participants, max_participants, duration_min, duration_max,
 		no_materials, publish_state, original_id)
 	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9)
-	RETURNING id, title, description, image,
-	          min_participants, max_participants,
-	          duration_min, duration_max,
-	          no_materials, publish_state, created_at`
+	RETURNING id`
 
-// CreateVariant creates a draft derived from originalID. The variant is the
-// caller's own game: the original's authors are not credited on it, and the
-// caller needs no more than sight of the original, since branching from a game
-// reads it rather than changes it.
-//
-// A variant of a variant is refused by games_original_not_variant_fkey. The
-// rule is left to the schema rather than checked first: the composite foreign
-// key is what makes one level the only level even under a concurrent insert,
-// and classify turns its violation into ErrInvalid naming the constraint.
 func CreateVariant(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -617,28 +589,21 @@ func CreateVariant(
 	}
 	defer tx.Rollback(ctx)
 
-	// Checked before the insert so an original the caller cannot see answers
-	// 404 rather than creating a variant of a stranger's draft: the foreign
-	// key only knows whether the row exists, not who may read it.
 	if err := requireVisibleGame(ctx, tx, originalID, authorID); err != nil {
 		return GameDetail{}, err
 	}
 
-	rows, err := tx.Query(ctx, createVariantQuery,
+	var gameID string
+	err = tx.QueryRow(ctx, createVariantQuery,
 		draft.Title, draft.Description, draft.Image,
 		draft.MinParticipants, draft.MaxParticipants,
 		draft.DurationMin, draft.DurationMax,
-		draft.NoMaterials, originalID)
+		draft.NoMaterials, originalID).Scan(&gameID)
 	if err != nil {
 		return GameDetail{}, classify(err)
 	}
 
-	game, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[Game])
-	if err != nil {
-		return GameDetail{}, classify(err)
-	}
-
-	return creditAuthor(ctx, pool, tx, game, authorID)
+	return creditAuthor(ctx, pool, tx, gameID, authorID)
 }
 
 // Optional used to distinguish absent from nul
@@ -1208,10 +1173,20 @@ func setPublishState(
 	return GetGameByID(ctx, pool, gameID, userID)
 }
 
-func PublishGame(ctx context.Context, pool *pgxpool.Pool, gameID string, userID string) (GameDetail, error) {
+func PublishGame(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameID string,
+	userID string,
+) (GameDetail, error) {
 	return setPublishState(ctx, pool, gameID, userID, "published")
 }
 
-func UnpublishGame(ctx context.Context, pool *pgxpool.Pool, gameID string, userID string) (GameDetail, error) {
+func UnpublishGame(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	gameID string,
+	userID string,
+) (GameDetail, error) {
 	return setPublishState(ctx, pool, gameID, userID, "draft")
 }
