@@ -51,7 +51,8 @@ type GameFilter struct {
 
 // gameColumns, gameFilters and gameVisibility are shared with SearchGames in
 // search.go, which differs from the list only in how it orders rows and
-// positions a page.
+// positions a page. gameColumns is also the detail query's, so a game reads
+// the same whether it arrives in a page or on its own.
 const gameColumns = `
 	SELECT g.id, g.title, g.description, g.image,
 	       g.min_participants, g.max_participants,
@@ -378,11 +379,7 @@ type GameDetail struct {
 	Blocks     []GameBlock
 }
 
-const getGameQuery = `
-	SELECT g.id, g.title, g.description, g.image,
-	       g.min_participants, g.max_participants,
-	       g.duration_min, g.duration_max,
-	       g.no_materials, g.publish_state, g.created_at
+const getGameQuery = gameColumns + `
 	FROM games g
 	WHERE g.id = @game_id
 	  AND` + gameVisibility
