@@ -151,10 +151,49 @@ func TestHandleGamesListKeepsVariantNullsNull(t *testing.T) {
 	}
 
 	assertSummary(t, body.Games[0], gameSummary{
-		ID:      testGameVariant,
-		Title:   "A variant with nothing of its own",
-		Authors: testAuthors(),
+		ID:         testGameVariant,
+		Title:      "A variant with nothing of its own",
+		OriginalID: ptr(testGamePublishedNewer),
+		Authors:    testAuthors(),
 	})
+}
+
+// TestHandleGamesListReportsOriginals is the card's side of the same rule: in
+// one page, the variant names its original and the original says null.
+func TestHandleGamesListReportsOriginals(t *testing.T) {
+	srv, pool := newAuthedTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+
+	original := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "The original",
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		PublishState:    "published",
+		CreatedAt:       original,
+	})
+	insertGame(t, ctx, pool, testGame{
+		ID:           testGameVariant,
+		Title:        "A variant",
+		PublishState: "published",
+		OriginalID:   ptr(testGamePublishedNewer),
+		CreatedAt:    original.Add(time.Hour),
+	})
+
+	body := getGames(t, srv.URL)
+	if len(body.Games) != 2 {
+		t.Fatalf("got %d games, want 2", len(body.Games))
+	}
+
+	// Newest first: the variant, then its original.
+	assertStringPtr(t, "variant original_id", body.Games[0].OriginalID, ptr(testGamePublishedNewer))
+	assertStringPtr(t, "original original_id", body.Games[1].OriginalID, nil)
 }
 
 // TestHandleGamesListReturnsEmptyArray guards the make-with-zero-length in the

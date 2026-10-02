@@ -130,10 +130,63 @@ func TestHandleGetGameKeepsVariantNullsNull(t *testing.T) {
 	}
 
 	assertSummary(t, got, gameSummary{
-		ID:      testGameVariant,
-		Title:   "A variant with nothing of its own",
-		Authors: testAuthors(),
+		ID:         testGameVariant,
+		Title:      "A variant with nothing of its own",
+		OriginalID: ptr(testGamePublishedNewer),
+		Authors:    testAuthors(),
 	})
+}
+
+// TestHandleGetGameReportsItsOriginal is what lets a client tell a variant from
+// the game it derives from: the variant names its original, and the original,
+// which is not a variant, says null rather than an empty string.
+func TestHandleGetGameReportsItsOriginal(t *testing.T) {
+	srv, pool := newAuthedTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+
+	original := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "The original",
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		PublishState:    "published",
+		CreatedAt:       original,
+	})
+	insertGame(t, ctx, pool, testGame{
+		ID:           testGameVariant,
+		Title:        "A variant",
+		PublishState: "published",
+		OriginalID:   ptr(testGamePublishedNewer),
+		CreatedAt:    original.Add(time.Hour),
+	})
+
+	cases := []struct {
+		id   string
+		want *string
+	}{
+		{testGameVariant, ptr(testGamePublishedNewer)},
+		{testGamePublishedNewer, nil},
+	}
+
+	for _, c := range cases {
+		status, body := getGame(t, srv.URL, c.id)
+		if status != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, want %d (body %s)", c.id, status, http.StatusOK, body)
+		}
+
+		var got gameSummary
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("could not decode the response body: %v", err)
+		}
+
+		assertStringPtr(t, "original_id of "+c.id, got.OriginalID, c.want)
+	}
 }
 
 // TestHandleGetGameUnknownID is the path that only works because the store

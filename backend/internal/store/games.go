@@ -28,6 +28,8 @@ type Game struct {
 	// tell it apart from work they have already published.
 	PublishState string `db:"publish_state"`
 
+	OriginalID *string `db:"original_id"`
+
 	// CreatedAt is the first half of the list's sort key, and so of the
 	// cursor. It is not part of the card the client renders.
 	CreatedAt time.Time `db:"created_at"`
@@ -57,7 +59,7 @@ const gameColumns = `
 	SELECT g.id, g.title, g.description, g.image,
 	       g.min_participants, g.max_participants,
 	       g.duration_min, g.duration_max,
-	       g.no_materials, g.publish_state, g.created_at`
+	       g.no_materials, g.publish_state, g.original_id, g.created_at`
 
 const gameFilters = `
 	  AND (

@@ -345,6 +345,7 @@ func assertSummary(t *testing.T, got, want gameSummary) {
 	assertInt32Ptr(t, "max_participants", got.MaxParticipants, want.MaxParticipants)
 	assertInt32Ptr(t, "duration_min", got.DurationMin, want.DurationMin)
 	assertInt32Ptr(t, "duration_max", got.DurationMax, want.DurationMax)
+	assertStringPtr(t, "original_id", got.OriginalID, want.OriginalID)
 	assertAuthors(t, got.Authors, want.Authors)
 }
 

@@ -32,6 +32,7 @@ type gameSummary struct {
 	DurationMax     *int32       `json:"duration_max"`
 	NoMaterials     bool         `json:"no_materials"`
 	PublishState    string       `json:"publish_state"`
+	OriginalID      *string      `json:"original_id"`
 	Authors         []gameAuthor `json:"authors"`
 }
 
@@ -60,6 +61,7 @@ func newGameSummary(g store.Game) gameSummary {
 		DurationMax:     g.DurationMax,
 		NoMaterials:     g.NoMaterials,
 		PublishState:    g.PublishState,
+		OriginalID:      g.OriginalID,
 		Authors:         authors,
 	}
 }
