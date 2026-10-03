@@ -30,6 +30,11 @@ type Game struct {
 
 	OriginalID *string `db:"original_id"`
 
+	OwnMinParticipants *int32 `db:"own_min_participants"`
+	OwnMaxParticipants *int32 `db:"own_max_participants"`
+	OwnDurationMin     *int32 `db:"own_duration_min"`
+	OwnDurationMax     *int32 `db:"own_duration_max"`
+
 	// CreatedAt is the first half of the list's sort key, and so of the
 	// cursor. It is not part of the card the client renders.
 	CreatedAt time.Time `db:"created_at"`
@@ -51,15 +56,15 @@ type GameFilter struct {
 	NoMaterials  *bool
 }
 
-// gameColumns, gameFilters and gameVisibility are shared with SearchGames in
-// search.go, which differs from the list only in how it orders rows and
-// positions a page. gameColumns is also the detail query's, so a game reads
-// the same whether it arrives in a page or on its own.
 const gameColumns = `
 	SELECT g.id, g.title, g.description, g.image,
 	       g.min_participants, g.max_participants,
 	       g.duration_min, g.duration_max,
-	       g.no_materials, g.publish_state, g.original_id, g.created_at`
+	       g.no_materials, g.publish_state, g.original_id, g.created_at,
+	       g.min_participants AS own_min_participants,
+	       g.max_participants AS own_max_participants,
+	       g.duration_min AS own_duration_min,
+	       g.duration_max AS own_duration_max`
 
 const gameFilters = `
 	  AND (
@@ -88,16 +93,10 @@ func (f GameFilter) namedArgs() pgx.StrictNamedArgs {
 	}
 }
 
-// gameAuthorship holds of a game the caller wrote. Seeing a game and changing
-// one are different questions, so the two predicates below stay separate: a
-// read admits more rows than a write does.
 const gameAuthorship = `EXISTS (
 	         SELECT 1 FROM game_authors ga
 	         WHERE ga.game_id = g.id AND ga.user_id = @viewer_id::uuid)`
 
-// gameVisibility admits a game the caller may see: published, or a draft the
-// caller authored. Every query that carries it names the viewer the same way,
-// so the predicate is the same text wherever it lands.
 const gameVisibility = `
 	  (g.publish_state = 'published'
 	   OR ` + gameAuthorship + `)`

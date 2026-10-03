@@ -201,10 +201,10 @@ func TestHandleEditGameClearsTheSpineOnNull(t *testing.T) {
 		name string
 		read func(gameDetail) *int32
 	}{
-		{"min_participants", func(g gameDetail) *int32 { return g.MinParticipants }},
-		{"max_participants", func(g gameDetail) *int32 { return g.MaxParticipants }},
-		{"duration_min", func(g gameDetail) *int32 { return g.DurationMin }},
-		{"duration_max", func(g gameDetail) *int32 { return g.DurationMax }},
+		{"min_participants", func(g gameDetail) *int32 { return g.Own.MinParticipants }},
+		{"max_participants", func(g gameDetail) *int32 { return g.Own.MaxParticipants }},
+		{"duration_min", func(g gameDetail) *int32 { return g.Own.DurationMin }},
+		{"duration_max", func(g gameDetail) *int32 { return g.Own.DurationMax }},
 	}
 
 	for _, f := range fields {

@@ -127,10 +127,10 @@ func TestHandleCreateVariantDerivesADraft(t *testing.T) {
 		t.Errorf("publish_state = %q, want %q", got.PublishState, "draft")
 	}
 
-	assertInt32Ptr(t, "min_participants", got.MinParticipants, nil)
-	assertInt32Ptr(t, "max_participants", got.MaxParticipants, nil)
-	assertInt32Ptr(t, "duration_min", got.DurationMin, nil)
-	assertInt32Ptr(t, "duration_max", got.DurationMax, nil)
+	assertInt32Ptr(t, "own.min_participants", got.Own.MinParticipants, nil)
+	assertInt32Ptr(t, "own.max_participants", got.Own.MaxParticipants, nil)
+	assertInt32Ptr(t, "own.duration_min", got.Own.DurationMin, nil)
+	assertInt32Ptr(t, "own.duration_max", got.Own.DurationMax, nil)
 
 	// The variant is the caller's own game. Deriving from someone else's work
 	// does not make them an author of the result.
@@ -159,10 +159,10 @@ func TestHandleCreateVariantMayStateItsOwnSpine(t *testing.T) {
 	body := `{"title": "Versao relampago", "duration_min": 5, "duration_max": 10}`
 	got := createVariant(t, srv.URL, variantOriginalID, body)
 
-	assertInt32Ptr(t, "duration_min", got.DurationMin, ptr(int32(5)))
-	assertInt32Ptr(t, "duration_max", got.DurationMax, ptr(int32(10)))
-	assertInt32Ptr(t, "min_participants", got.MinParticipants, nil)
-	assertInt32Ptr(t, "max_participants", got.MaxParticipants, nil)
+	assertInt32Ptr(t, "own.duration_min", got.Own.DurationMin, ptr(int32(5)))
+	assertInt32Ptr(t, "own.duration_max", got.Own.DurationMax, ptr(int32(10)))
+	assertInt32Ptr(t, "own.min_participants", got.Own.MinParticipants, nil)
+	assertInt32Ptr(t, "own.max_participants", got.Own.MaxParticipants, nil)
 }
 
 // TestHandleCreateVariantRefusesASecondLevel is the rule the composite foreign

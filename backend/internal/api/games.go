@@ -97,10 +97,19 @@ type gameBlock struct {
 	Position int32  `json:"position"`
 }
 
+// own fields  in GameDetail
+type gameSpine struct {
+	MinParticipants *int32 `json:"min_participants"`
+	MaxParticipants *int32 `json:"max_participants"`
+	DurationMin     *int32 `json:"duration_min"`
+	DurationMax     *int32 `json:"duration_max"`
+}
+
 // gameDetail embeds the summary so a card and a detail page read the same
-// spine fields, and adds the associations.
+// spine fields, and adds the game's own spine and the associations.
 type gameDetail struct {
 	gameSummary
+	Own        gameSpine      `json:"own"`
 	Categories []gameCategory `json:"categories"`
 	Locations  []gameLocation `json:"locations"`
 	Materials  []gameMaterial `json:"materials"`
@@ -148,24 +157,19 @@ func newGameDetail(g store.GameDetail) gameDetail {
 
 	return gameDetail{
 		gameSummary: newGameSummary(g.Game),
-		Categories:  categories,
-		Locations:   locations,
-		Materials:   materials,
-		Blocks:      blocks,
+		Own: gameSpine{
+			MinParticipants: g.OwnMinParticipants,
+			MaxParticipants: g.OwnMaxParticipants,
+			DurationMin:     g.OwnDurationMin,
+			DurationMax:     g.OwnDurationMax,
+		},
+		Categories: categories,
+		Locations:  locations,
+		Materials:  materials,
+		Blocks:     blocks,
 	}
 }
 
-// handleGamesList serves GET /v1/games. The category and location parameters
-// repeat and AND together, so ?category=a&category=b asks for the games
-// carrying both. participants, duration and no_materials take a single value
-// each, and every filter given has to hold at once.
-//
-// query searches the full text of the game and narrows alongside the filters
-// rather than replacing them, since the filter rail stays live while a search
-// is running. It also changes the order: results come back best match first
-// instead of newest first, and so are paged by counting rows rather than by
-// the keyset the list walks. Both kinds of position travel in the one opaque
-// cursor the response carries.
 func (s *Server) handleGamesList(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
@@ -918,7 +922,6 @@ func (s *Server) handlePublishGame(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("Failed to write publish game response", "error", err)
 	}
-
 }
 
 func (s *Server) handleUnpublishGame(w http.ResponseWriter, r *http.Request) {
@@ -948,5 +951,4 @@ func (s *Server) handleUnpublishGame(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("Failed to write unpublish game response", "error", err)
 	}
-
 }

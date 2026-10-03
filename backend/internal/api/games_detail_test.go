@@ -189,6 +189,53 @@ func TestHandleGetGameReportsItsOriginal(t *testing.T) {
 	}
 }
 
+// TestHandleGetGameCarriesItsOwnSpine is the half of the detail the editor
+// reads: own holds what the variant itself stores, a value where it states one
+// and null where it leaves the field to its original.
+func TestHandleGetGameCarriesItsOwnSpine(t *testing.T) {
+	srv, pool := newAuthedTestServer(t)
+	ctx := testContext(t)
+
+	insertAuthor(t, ctx, pool, testAuthorID)
+
+	original := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	insertGame(t, ctx, pool, testGame{
+		ID:              testGamePublishedNewer,
+		Title:           "The original",
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		PublishState:    "published",
+		CreatedAt:       original,
+	})
+	insertGame(t, ctx, pool, testGame{
+		ID:           testGameVariant,
+		Title:        "A shorter variant",
+		DurationMin:  ptr(int32(5)),
+		DurationMax:  ptr(int32(8)),
+		PublishState: "published",
+		OriginalID:   ptr(testGamePublishedNewer),
+		CreatedAt:    original.Add(time.Hour),
+	})
+
+	status, body := getGame(t, srv.URL, testGameVariant)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusOK, body)
+	}
+
+	var got gameDetail
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("could not decode the response body: %v", err)
+	}
+
+	assertInt32Ptr(t, "own.min_participants", got.Own.MinParticipants, nil)
+	assertInt32Ptr(t, "own.max_participants", got.Own.MaxParticipants, nil)
+	assertInt32Ptr(t, "own.duration_min", got.Own.DurationMin, ptr(int32(5)))
+	assertInt32Ptr(t, "own.duration_max", got.Own.DurationMax, ptr(int32(8)))
+}
+
 // TestHandleGetGameUnknownID is the path that only works because the store
 // collects exactly one row: an empty result has to surface as pgx.ErrNoRows for
 // classify to turn it into ErrNotFound, and a slice-collecting query would
