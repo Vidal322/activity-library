@@ -464,12 +464,11 @@ func TestHandleGamesListCombinesScalarAndCategoryFilters(t *testing.T) {
 	}
 }
 
-// TestHandleGamesListScalarFiltersTreatNullBoundsAsUnbounded fixes the choice
-// the query had to make about the nullable half of the spine. Only a variant
-// can carry nulls, since games_non_variant_complete requires the four columns
-// of everything else. A blank bound means nobody said, not does not fit, so it
-// is read as no limit on that side rather than as a reason to hide the game.
-func TestHandleGamesListScalarFiltersTreatNullBoundsAsUnbounded(t *testing.T) {
+// TestHandleGamesListScalarFiltersMatchTheResolvedSpine is the filter reading
+// the same numbers the card shows. A variant that sets nothing is held to its
+// original's bands, and one that states a band of its own is held to that, so
+// a filter never returns a game whose card plainly does not fit.
+func TestHandleGamesListScalarFiltersMatchTheResolvedSpine(t *testing.T) {
 	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
@@ -478,7 +477,7 @@ func TestHandleGamesListScalarFiltersTreatNullBoundsAsUnbounded(t *testing.T) {
 
 	insertGame(t, ctx, pool, testGame{
 		ID:              testGamePublishedNewer,
-		Title:           "The original",
+		Title:           "Corrida de sacos",
 		MinParticipants: ptr(int32(10)),
 		MaxParticipants: ptr(int32(20)),
 		DurationMin:     ptr(int32(30)),
@@ -488,10 +487,19 @@ func TestHandleGamesListScalarFiltersTreatNullBoundsAsUnbounded(t *testing.T) {
 	})
 	insertGame(t, ctx, pool, testGame{
 		ID:           testGameVariant,
-		Title:        "A variant with nothing of its own",
+		Title:        "Corrida de sacos, a mesma",
 		PublishState: "published",
 		OriginalID:   ptr(testGamePublishedNewer),
 		CreatedAt:    base.Add(time.Hour),
+	})
+	insertGame(t, ctx, pool, testGame{
+		ID:           testGameVariantShort,
+		Title:        "Corrida de sacos, versão curta",
+		DurationMin:  ptr(int32(5)),
+		DurationMax:  ptr(int32(8)),
+		PublishState: "published",
+		OriginalID:   ptr(testGamePublishedNewer),
+		CreatedAt:    base.Add(2 * time.Hour),
 	})
 
 	for name, tc := range map[string]struct {
@@ -499,13 +507,20 @@ func TestHandleGamesListScalarFiltersTreatNullBoundsAsUnbounded(t *testing.T) {
 		want  []string
 	}{
 		"inside the original's band": {
-			"participants=15", []string{testGameVariant, testGamePublishedNewer},
+			"participants=15",
+			[]string{testGameVariantShort, testGameVariant, testGamePublishedNewer},
 		},
 		"outside it": {
-			"participants=100", []string{testGameVariant},
+			"participants=100", nil,
 		},
-		"duration outside it": {
-			"duration=5", []string{testGameVariant},
+		"duration of the original": {
+			"duration=45", []string{testGameVariant, testGamePublishedNewer},
+		},
+		"duration the variant states": {
+			"duration=5", []string{testGameVariantShort},
+		},
+		"search reads the same spine": {
+			"query=sacos&duration=5", []string{testGameVariantShort},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -56,28 +56,28 @@ type GameFilter struct {
 	NoMaterials  *bool
 }
 
-// gameColumns reads a variant's unset spine fields from its original, and
-// keeps the variant's own values beside them under own_*. It names o, so every
-// query that selects it reads FROM gameSource.
+// gameColumns reads the spine resolved in s, and keeps the game's own values
+// beside it under own_*. It names s, so every query that selects it reads FROM
+// gameSource.
 const gameColumns = `
 	SELECT g.id, g.title, g.description, g.image,
-	       coalesce(g.min_participants, o.min_participants) AS min_participants,
-	       coalesce(g.max_participants, o.max_participants) AS max_participants,
-	       coalesce(g.duration_min, o.duration_min) AS duration_min,
-	       coalesce(g.duration_max, o.duration_max) AS duration_max,
+	       s.min_participants, s.max_participants,
+	       s.duration_min, s.duration_max,
 	       g.no_materials, g.publish_state, g.original_id, g.created_at,
 	       g.min_participants AS own_min_participants,
 	       g.max_participants AS own_max_participants,
 	       g.duration_min AS own_duration_min,
 	       g.duration_max AS own_duration_max`
 
-// gameSource joins each game to its original. The join is a left one because a
-// game that is not a variant has no original and must still come back. The
-// original is read without a visibility check: only a published game can be
-// one (#66).
 const gameSource = `
 	FROM games g
-	LEFT JOIN games o ON o.id = g.original_id`
+	LEFT JOIN games o ON o.id = g.original_id
+	CROSS JOIN LATERAL (
+	    SELECT coalesce(g.min_participants, o.min_participants) AS min_participants,
+	           coalesce(g.max_participants, o.max_participants) AS max_participants,
+	           coalesce(g.duration_min, o.duration_min) AS duration_min,
+	           coalesce(g.duration_max, o.duration_max) AS duration_max
+	) s`
 
 const gameFilters = `
 	  AND (
@@ -89,11 +89,11 @@ const gameFilters = `
 	        WHERE gl.game_id = g.id AND gl.location_id = ANY(@location_ids::uuid[])
 	      ) = coalesce(cardinality(@location_ids::uuid[]), 0)
 	  AND (@participants::int IS NULL OR (
-	            (g.min_participants IS NULL OR g.min_participants <= @participants)
-	        AND (g.max_participants IS NULL OR g.max_participants >= @participants)))
+	            s.min_participants <= @participants
+	        AND s.max_participants >= @participants))
 	  AND (@duration::int IS NULL OR (
-	            (g.duration_min IS NULL OR g.duration_min <= @duration)
-	        AND (g.duration_max IS NULL OR g.duration_max >= @duration)))
+	            s.duration_min <= @duration
+	        AND s.duration_max >= @duration))
 	  AND (@no_materials::bool IS NULL OR g.no_materials = @no_materials)`
 
 func (f GameFilter) namedArgs() pgx.StrictNamedArgs {

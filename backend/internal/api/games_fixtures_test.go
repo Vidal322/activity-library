@@ -21,6 +21,7 @@ const (
 	testGameDraft          = "60000000-0000-7000-8000-0000000000a3"
 	testGameVariant        = "60000000-0000-7000-8000-0000000000a4"
 	testGamePublishedThird = "60000000-0000-7000-8000-0000000000a5"
+	testGameVariantShort   = "60000000-0000-7000-8000-0000000000a6"
 
 	// testGameMissing is well formed and deliberately never inserted.
 	testGameMissing = "60000000-0000-7000-8000-0000000000ff"
