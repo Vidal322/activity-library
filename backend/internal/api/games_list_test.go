@@ -116,10 +116,9 @@ func TestHandleGamesListMapsCardFields(t *testing.T) {
 	assertSummary(t, body.Games[0], want)
 }
 
-// TestHandleGamesListKeepsVariantNullsNull covers the case the schema allows
-// and a zero value would misreport: a variant carries no participants or
-// duration of its own, and the card must say so rather than claim zero.
-func TestHandleGamesListKeepsVariantNullsNull(t *testing.T) {
+// TestHandleGamesListResolvesVariantFromOriginal is the card's side of the
+// same rule: a variant that sets none of its spine shows its original's.
+func TestHandleGamesListResolvesVariantFromOriginal(t *testing.T) {
 	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
@@ -151,10 +150,14 @@ func TestHandleGamesListKeepsVariantNullsNull(t *testing.T) {
 	}
 
 	assertSummary(t, body.Games[0], gameSummary{
-		ID:         testGameVariant,
-		Title:      "A variant with nothing of its own",
-		OriginalID: ptr(testGamePublishedNewer),
-		Authors:    testAuthors(),
+		ID:              testGameVariant,
+		Title:           "A variant with nothing of its own",
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		OriginalID:      ptr(testGamePublishedNewer),
+		Authors:         testAuthors(),
 	})
 }
 

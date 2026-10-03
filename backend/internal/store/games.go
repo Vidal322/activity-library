@@ -56,15 +56,28 @@ type GameFilter struct {
 	NoMaterials  *bool
 }
 
+// gameColumns reads a variant's unset spine fields from its original, and
+// keeps the variant's own values beside them under own_*. It names o, so every
+// query that selects it reads FROM gameSource.
 const gameColumns = `
 	SELECT g.id, g.title, g.description, g.image,
-	       g.min_participants, g.max_participants,
-	       g.duration_min, g.duration_max,
+	       coalesce(g.min_participants, o.min_participants) AS min_participants,
+	       coalesce(g.max_participants, o.max_participants) AS max_participants,
+	       coalesce(g.duration_min, o.duration_min) AS duration_min,
+	       coalesce(g.duration_max, o.duration_max) AS duration_max,
 	       g.no_materials, g.publish_state, g.original_id, g.created_at,
 	       g.min_participants AS own_min_participants,
 	       g.max_participants AS own_max_participants,
 	       g.duration_min AS own_duration_min,
 	       g.duration_max AS own_duration_max`
+
+// gameSource joins each game to its original. The join is a left one because a
+// game that is not a variant has no original and must still come back. The
+// original is read without a visibility check: only a published game can be
+// one (#66).
+const gameSource = `
+	FROM games g
+	LEFT JOIN games o ON o.id = g.original_id`
 
 const gameFilters = `
 	  AND (
@@ -101,8 +114,7 @@ const gameVisibility = `
 	  (g.publish_state = 'published'
 	   OR ` + gameAuthorship + `)`
 
-const listGamesQuery = gameColumns + `
-	FROM games g
+const listGamesQuery = gameColumns + gameSource + `
 	WHERE` + gameVisibility + gameFilters + `
 	  AND (@cursor_created_at::timestamptz IS NULL
 	       OR (g.created_at, g.id) < (@cursor_created_at::timestamptz, @cursor_id::uuid))
@@ -380,8 +392,7 @@ type GameDetail struct {
 	Blocks     []GameBlock
 }
 
-const getGameQuery = gameColumns + `
-	FROM games g
+const getGameQuery = gameColumns + gameSource + `
 	WHERE g.id = @game_id
 	  AND` + gameVisibility
 

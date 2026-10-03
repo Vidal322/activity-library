@@ -12,8 +12,7 @@ import (
 // The space in `@@ websearch_to_tsquery` is load-bearing: pgx reads '@'
 // followed by a letter as a named placeholder, so `@@websearch_to_tsquery`
 // would be rewritten into nonsense.
-const searchGamesQuery = gameColumns + `
-	FROM games g
+const searchGamesQuery = gameColumns + gameSource + `
 	JOIN game_search gs ON gs.game_id = g.id
 	WHERE` + gameVisibility + gameFilters + `
 	  AND gs.document @@ websearch_to_tsquery('pt_unaccent', @q)

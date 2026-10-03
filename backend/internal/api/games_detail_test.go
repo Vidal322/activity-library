@@ -90,10 +90,10 @@ func TestHandleGetGameReturnsTheRow(t *testing.T) {
 	assertSummary(t, got, want)
 }
 
-// TestHandleGetGameKeepsVariantNullsNull is the null-vs-zero trap the list
-// endpoint also guards: a variant carries no participants or duration of its
-// own, and the response must say null rather than claim zero.
-func TestHandleGetGameKeepsVariantNullsNull(t *testing.T) {
+// TestHandleGetGameResolvesVariantFromOriginal is a variant that sets none of
+// its spine: the detail shows the original's participants and duration rather
+// than nulls a reader cannot use.
+func TestHandleGetGameResolvesVariantFromOriginal(t *testing.T) {
 	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
@@ -130,10 +130,14 @@ func TestHandleGetGameKeepsVariantNullsNull(t *testing.T) {
 	}
 
 	assertSummary(t, got, gameSummary{
-		ID:         testGameVariant,
-		Title:      "A variant with nothing of its own",
-		OriginalID: ptr(testGamePublishedNewer),
-		Authors:    testAuthors(),
+		ID:              testGameVariant,
+		Title:           "A variant with nothing of its own",
+		MinParticipants: ptr(int32(6)),
+		MaxParticipants: ptr(int32(16)),
+		DurationMin:     ptr(int32(10)),
+		DurationMax:     ptr(int32(15)),
+		OriginalID:      ptr(testGamePublishedNewer),
+		Authors:         testAuthors(),
 	})
 }
 
@@ -234,6 +238,12 @@ func TestHandleGetGameCarriesItsOwnSpine(t *testing.T) {
 	assertInt32Ptr(t, "own.max_participants", got.Own.MaxParticipants, nil)
 	assertInt32Ptr(t, "own.duration_min", got.Own.DurationMin, ptr(int32(5)))
 	assertInt32Ptr(t, "own.duration_max", got.Own.DurationMax, ptr(int32(8)))
+
+	// The values shown: participants inherited, duration the variant's own.
+	assertInt32Ptr(t, "min_participants", got.MinParticipants, ptr(int32(6)))
+	assertInt32Ptr(t, "max_participants", got.MaxParticipants, ptr(int32(16)))
+	assertInt32Ptr(t, "duration_min", got.DurationMin, ptr(int32(5)))
+	assertInt32Ptr(t, "duration_max", got.DurationMax, ptr(int32(8)))
 }
 
 // TestHandleGetGameUnknownID is the path that only works because the store
