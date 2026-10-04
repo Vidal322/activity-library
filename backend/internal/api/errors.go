@@ -68,10 +68,6 @@ var invalidMessages = map[string]string{
 	"game_materials_game_fkey":              "this game is marked as needing no materials; unset no_materials before adding any",
 }
 
-var referencedMessages = map[string]string{
-	"game_materials_game_fkey": "this game still lists materials; remove them before marking it as needing no materials",
-}
-
 var inUseMessages = map[string]string{
 	"categories_family_id_fkey":        "that family still has categories",
 	"game_authors_user_id_fkey":        "that user still has games",
@@ -79,6 +75,7 @@ var inUseMessages = map[string]string{
 	"game_categories_category_id_fkey": "that category is still used by a game",
 	"game_locations_location_id_fkey":  "that location is still used by a game",
 	"game_materials_material_id_fkey":  "that material is still used by a game",
+	"game_materials_game_fkey":         "this game still lists materials; remove them before marking it as needing no materials",
 }
 
 func (s *Server) writeStoreError(w http.ResponseWriter, err error) {
@@ -113,13 +110,6 @@ func storeErrorResponse(err error) (int, string) {
 
 	case errors.Is(err, store.ErrInUse):
 		return http.StatusConflict, message(err, inUseMessages, "still referenced by other records")
-
-	case errors.Is(err, store.ErrReferenced):
-		return http.StatusConflict, message(
-			err,
-			referencedMessages,
-			"still referenced by other records",
-		)
 
 	case errors.Is(err, store.ErrConflict):
 		return http.StatusConflict, message(err, conflictMessages, "already exists")

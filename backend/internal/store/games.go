@@ -689,7 +689,7 @@ func EditGame(
 
 	tag, err := pool.Exec(ctx, query, args)
 	if err != nil {
-		return GameDetail{}, classifyReferenced(err)
+		return GameDetail{}, classifyInUse(err)
 	}
 
 	if tag.RowsAffected() == 0 {

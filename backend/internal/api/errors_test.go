@@ -89,15 +89,9 @@ func TestStoreErrorResponse(t *testing.T) {
 		},
 		{
 			name:       "no_materials on a game that lists materials",
-			in:         &store.ConstraintError{Constraint: "game_materials_game_fkey", Sentinel: store.ErrReferenced},
+			in:         &store.ConstraintError{Constraint: "game_materials_game_fkey", Sentinel: store.ErrInUse},
 			wantStatus: http.StatusConflict,
 			wantMsg:    "this game still lists materials; remove them before marking it as needing no materials",
-		},
-		{
-			name:       "bare referenced uses the generic wording",
-			in:         store.ErrReferenced,
-			wantStatus: http.StatusConflict,
-			wantMsg:    "still referenced by other records",
 		},
 		{
 			// Raised by the deferred trigger, which reports itself as a check
