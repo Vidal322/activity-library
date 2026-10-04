@@ -28,6 +28,10 @@ import (
 // variantOriginalID is the game these tests derive from.
 const variantOriginalID = testGamePublishedNewer
 
+// msgOriginalRefused is what games_original_not_variant_fkey reads as when an
+// insert names an original it does not admit.
+const msgOriginalRefused = "the original game does not exist, is itself a variant, or is not published"
+
 // seedOriginal writes the game the variants hang off, authored by somebody
 // other than the caller.
 func seedOriginal(t *testing.T, ctx context.Context, pool *pgxpool.Pool, state string) {
@@ -184,7 +188,7 @@ func TestHandleCreateVariantRefusesASecondLevel(t *testing.T) {
 			status, http.StatusUnprocessableEntity, raw)
 	}
 
-	assertErrorMessage(t, raw, "the original game does not exist, or is itself a variant")
+	assertErrorMessage(t, raw, msgOriginalRefused)
 
 	// Two games: the original and the one variant it is allowed.
 	if n := countGames(t, ctx, pool); n != 2 {
@@ -192,10 +196,11 @@ func TestHandleCreateVariantRefusesASecondLevel(t *testing.T) {
 	}
 }
 
-// TestHandleCreateVariantOfADraftTheCallerWrote covers the case the visibility
-// rule admits beyond published games: an author may branch from their own
-// unpublished work, which is how one draft becomes two.
-func TestHandleCreateVariantOfADraftTheCallerWrote(t *testing.T) {
+// TestHandleCreateVariantRefusesADraftTheCallerWrote covers the one game the
+// visibility check admits but the schema does not: the caller's own draft.
+// They can see it, so this is no 404; games_original_not_variant_fkey only
+// matches published originals, so the insert is refused with a 422.
+func TestHandleCreateVariantRefusesADraftTheCallerWrote(t *testing.T) {
 	srv, pool := newAuthedTestServer(t)
 	ctx := testContext(t)
 
@@ -211,11 +216,16 @@ func TestHandleCreateVariantOfADraftTheCallerWrote(t *testing.T) {
 		Authors:         []string{testSessionUserID},
 	})
 
-	got := createVariant(t, srv.URL, testGameDraft, variantBody)
+	status, raw, _ := postVariant(t, srv.URL, testGameDraft, variantBody)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d (body %s)",
+			status, http.StatusUnprocessableEntity, raw)
+	}
 
-	originalID := originalOf(t, ctx, pool, got.ID)
-	if originalID == nil || *originalID != testGameDraft {
-		t.Errorf("games.original_id = %v, want %s", deref(originalID), testGameDraft)
+	assertErrorMessage(t, raw, msgOriginalRefused)
+
+	if n := countGames(t, ctx, pool); n != 1 {
+		t.Errorf("games table holds %d rows, want 1: the refused variant was written anyway", n)
 	}
 }
 

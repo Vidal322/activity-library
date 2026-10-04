@@ -55,7 +55,7 @@ var invalidMessages = map[string]string{
 	"games_author_required":                       "a game must have at least one author",
 
 	"game_authors_user_id_fkey":             "unknown author",
-	"games_original_not_variant_fkey":       "the original game does not exist, or is itself a variant",
+	"games_original_not_variant_fkey":       "the original game does not exist, is itself a variant, or is not published",
 	"categories_family_id_fkey":             "unknown category family",
 	"blocks_game_id_fkey":                   "unknown game",
 	"game_categories_game_id_fkey":          "unknown game",
@@ -75,7 +75,7 @@ var referencedMessages = map[string]string{
 var inUseMessages = map[string]string{
 	"categories_family_id_fkey":        "that family still has categories",
 	"game_authors_user_id_fkey":        "that user still has games",
-	"games_original_not_variant_fkey":  "that game still has variants",
+	"games_original_not_variant_fkey":  "this game has variants; a variant's original must stay published",
 	"game_categories_category_id_fkey": "that category is still used by a game",
 	"game_locations_location_id_fkey":  "that location is still used by a game",
 	"game_materials_material_id_fkey":  "that material is still used by a game",
@@ -115,7 +115,7 @@ func storeErrorResponse(err error) (int, string) {
 		return http.StatusConflict, message(err, inUseMessages, "still referenced by other records")
 
 	case errors.Is(err, store.ErrReferenced):
-		return http.StatusUnprocessableEntity, message(
+		return http.StatusConflict, message(
 			err,
 			referencedMessages,
 			"still referenced by other records",

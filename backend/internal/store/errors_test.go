@@ -126,7 +126,7 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-func TestClassifyDelete(t *testing.T) {
+func TestClassifyInUse(t *testing.T) {
 	tests := []struct {
 		name           string
 		in             error
@@ -163,13 +163,13 @@ func TestClassifyDelete(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classifyDelete(tt.in)
+			got := classifyInUse(tt.in)
 			assertClassified(t, tt.in, got, tt.wantSentinel, tt.wantConstraint)
 		})
 	}
 }
 
-func TestClassifyUpdate(t *testing.T) {
+func TestClassifyReferenced(t *testing.T) {
 	tests := []struct {
 		name           string
 		in             error
@@ -206,7 +206,7 @@ func TestClassifyUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classifyUpdate(tt.in)
+			got := classifyReferenced(tt.in)
 			assertClassified(t, tt.in, got, tt.wantSentinel, tt.wantConstraint)
 		})
 	}

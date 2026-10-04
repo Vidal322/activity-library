@@ -689,7 +689,7 @@ func EditGame(
 
 	tag, err := pool.Exec(ctx, query, args)
 	if err != nil {
-		return GameDetail{}, classifyUpdate(err)
+		return GameDetail{}, classifyReferenced(err)
 	}
 
 	if tag.RowsAffected() == 0 {
@@ -1172,7 +1172,7 @@ func setPublishState(
 		"state":   state,
 	})
 	if err != nil {
-		return GameDetail{}, classify(err)
+		return GameDetail{}, classifyInUse(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

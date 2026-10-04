@@ -112,8 +112,8 @@ func TestHandleEditGameRefusesToFlagAGameThatListsMaterials(t *testing.T) {
 
 	status, raw := patchGame(t, srv.URL, materialGame,
 		`{"title": "Renamed", "no_materials": true}`)
-	if status != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusUnprocessableEntity, raw)
+	if status != http.StatusConflict {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusConflict, raw)
 	}
 
 	assertErrorMessage(t, raw,

@@ -112,6 +112,9 @@ CREATE TABLE games (
     original_is_variant boolean GENERATED ALWAYS AS (
         CASE WHEN original_id IS NULL THEN NULL::boolean ELSE false END
     ) STORED,
+    original_publish_state text GENERATED ALWAYS AS (
+        CASE WHEN original_id IS NULL THEN NULL::text ELSE 'published' END
+    ) STORED,
 
     CONSTRAINT games_participants_range CHECK (min_participants <= max_participants),
     CONSTRAINT games_duration_range CHECK (duration_min <= duration_max),
@@ -123,11 +126,15 @@ CREATE TABLE games (
             AND duration_max IS NOT NULL)
     ),
 
-    CONSTRAINT games_id_is_variant_key UNIQUE (id, is_variant),
+    CONSTRAINT games_id_is_variant_publish_state_key UNIQUE (id, is_variant, publish_state),
     CONSTRAINT games_id_no_materials_key UNIQUE (id, no_materials),
+    -- A variant's original is a published game that is not itself a variant.
+    -- The variant side pins both to constants, so an insert pointing at a
+    -- draft or a variant has no row to match, and unpublishing an original
+    -- that still has variants changes a referenced key and is refused.
     CONSTRAINT games_original_not_variant_fkey
-        FOREIGN KEY (original_id, original_is_variant)
-        REFERENCES games (id, is_variant)
+        FOREIGN KEY (original_id, original_is_variant, original_publish_state)
+        REFERENCES games (id, is_variant, publish_state)
 );
 
 CREATE INDEX games_original_idx ON games (original_id) WHERE original_id IS NOT NULL;

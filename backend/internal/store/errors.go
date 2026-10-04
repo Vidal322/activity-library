@@ -63,7 +63,9 @@ func classify(err error) error {
 	}
 }
 
-func classifyDelete(err error) error {
+// classifyInUse reads a foreign-key violation as the row still being in use by
+// others: a delete, or a change to a key that other rows point at.
+func classifyInUse(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
 		return constraintErr(pgErr.ConstraintName, ErrInUse)
@@ -71,7 +73,9 @@ func classifyDelete(err error) error {
 	return classify(err)
 }
 
-func classifyUpdate(err error) error {
+// classifyReferenced reads a foreign-key violation as the row still being
+// referenced by rows that the requested change would leave invalid.
+func classifyReferenced(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
 		return constraintErr(pgErr.ConstraintName, ErrReferenced)

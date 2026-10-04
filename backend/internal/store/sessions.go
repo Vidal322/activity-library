@@ -72,7 +72,7 @@ const deleteSessionQuery = `
 func DeleteSession(ctx context.Context, pool *pgxpool.Pool, tokenHash string) error {
 	tag, err := pool.Exec(ctx, deleteSessionQuery, tokenHash)
 	if err != nil {
-		return classifyDelete(err)
+		return classifyInUse(err)
 	}
 
 	if tag.RowsAffected() == 0 {

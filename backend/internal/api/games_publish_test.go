@@ -189,6 +189,39 @@ func TestHandleUnpublishGameReturnsTheGameToDraft(t *testing.T) {
 	assertPublishState(t, ctx, pool, got, "draft")
 }
 
+// TestHandleUnpublishGameRefusesAnOriginalWithVariants is the other half of
+// the rule that a variant's original is published. Sending the original back
+// to draft would change a key games_original_not_variant_fkey still points
+// at, so the database refuses it and the handler reports the conflict.
+func TestHandleUnpublishGameRefusesAnOriginalWithVariants(t *testing.T) {
+	srv, pool := newAuthedTestServer(t)
+	ctx := testContext(t)
+
+	seedPublishFixture(t, ctx, pool, "published")
+	insertGame(t, ctx, pool, testGame{
+		ID:           testGameVariant,
+		Title:        "Jogo do Lenço, versão curta",
+		PublishState: "draft",
+		OriginalID:   ptr(publishGameID),
+		CreatedAt:    time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC),
+		Authors:      []string{testAuthorID},
+	})
+
+	status, raw := postPublish(t, srv.URL, publishGameID, "unpublish")
+	if status != http.StatusConflict {
+		t.Fatalf("status = %d, want %d (body %s)", status, http.StatusConflict, raw)
+	}
+
+	assertErrorMessage(t, raw, "this game has variants; a variant's original must stay published")
+
+	if state := publishStateOf(t, ctx, pool, publishGameID); state != "published" {
+		t.Errorf("games.publish_state = %q, want %q", state, "published")
+	}
+	if n := countGames(t, ctx, pool); n != 2 {
+		t.Errorf("games table holds %d rows, want 2", n)
+	}
+}
+
 // TestPublishRoundTripAddsAndRemovesTheGameFromTheList is what the issue asks
 // for: publish a game, see it in the list, unpublish it, see it gone.
 //
