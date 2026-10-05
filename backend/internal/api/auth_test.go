@@ -537,7 +537,7 @@ func TestHandleLogoutRefusesWithoutAValidSession(t *testing.T) {
 
 	// A token of the shape login issues, that login never issued. This is the
 	// case that has to reach the database to be refused; the other two do not.
-	unissued, err := auth.NewSessionToken()
+	unissued, err := auth.NewToken()
 	if err != nil {
 		t.Fatalf("could not build an unissued token: %v", err)
 	}

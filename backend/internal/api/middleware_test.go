@@ -135,7 +135,7 @@ func TestRequireAuthRefusesEveryBadSessionIdentically(t *testing.T) {
 
 	userID := seedUser(t, ctx, pool, "Pedro", testEmail)
 
-	unissued, err := auth.NewSessionToken()
+	unissued, err := auth.NewToken()
 	if err != nil {
 		t.Fatalf("could not build an unissued token: %v", err)
 	}

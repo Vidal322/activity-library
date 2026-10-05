@@ -8,18 +8,19 @@ import (
 	"fmt"
 )
 
-// tokenBytes is the size of a session token before encoding. 256 bits of
+// tokenBytes is the size of a token before encoding. 256 bits of
 // randomness puts guessing a live token out of reach, which is what lets the
 // hash below be a plain digest rather than a password hash.
 const tokenBytes = 32
 
-// NewSessionToken returns a fresh session token. The value it returns is the
-// only place the usable token ever exists: it goes into the cookie, and the
-// database stores nothing but its hash.
+// NewToken returns a fresh random token, for a session or an invitation. The
+// value it returns is the only place the usable token ever exists: it goes into
+// the cookie or the invitation link, and the database stores nothing but its
+// hash.
 //
 // The encoding is base64url without padding, so the token survives a cookie
 // value, a URL and a header without escaping.
-func NewSessionToken() (string, error) {
+func NewToken() (string, error) {
 	b := make([]byte, tokenBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("read random bytes: %w", err)
@@ -28,13 +29,13 @@ func NewSessionToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// HashToken returns the hex-encoded SHA-256 of a session token. This is what
-// the sessions table holds and what a lookup matches on.
+// HashToken returns the hex-encoded SHA-256 of a token from NewToken. This is
+// what the sessions and invitations tables hold and what a lookup matches on.
 //
 // SHA-256 and not argon2, which is the surprising half given Hash next door.
 // A password hash is deliberately slow because passwords are short, low-entropy
 // and guessable, so an attacker with the table can mount an offline search.
-// A token from NewSessionToken carries 256 bits of randomness and is not
+// A token from NewToken carries 256 bits of randomness and is not
 // guessable at any cost, so there is no search to slow down: argon2 here would
 // add its full cost to every single authenticated request and buy nothing.
 //

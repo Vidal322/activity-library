@@ -9,16 +9,16 @@ import (
 // These tests need no database. Everything here is a property the session
 // lookup in the api package depends on.
 
-// TestNewSessionTokenIsUnique is the assertion the whole file exists for. A
+// TestNewTokenIsUnique is the assertion the whole file exists for. A
 // generator that returned a constant, or one seeded from the clock, would pass
 // every other test here and hand every logged-in person the same session. The
 // loop is the only thing that catches it.
-func TestNewSessionTokenIsUnique(t *testing.T) {
+func TestNewTokenIsUnique(t *testing.T) {
 	const runs = 1000
 
 	seen := make(map[string]struct{}, runs)
 	for i := range runs {
-		token, err := NewSessionToken()
+		token, err := NewToken()
 		if err != nil {
 			t.Fatalf("run %d: could not mint a token: %v", i, err)
 		}
@@ -29,11 +29,11 @@ func TestNewSessionTokenIsUnique(t *testing.T) {
 	}
 }
 
-// TestNewSessionTokenCarriesFullEntropy pins the size, which is what lets
+// TestNewTokenCarriesFullEntropy pins the size, which is what lets
 // HashToken be a plain digest: at 256 bits there is nothing to guess. A token
 // shortened to something "tidier" would quietly turn that reasoning false.
-func TestNewSessionTokenCarriesFullEntropy(t *testing.T) {
-	token, err := NewSessionToken()
+func TestNewTokenCarriesFullEntropy(t *testing.T) {
+	token, err := NewToken()
 	if err != nil {
 		t.Fatalf("could not mint a token: %v", err)
 	}
@@ -48,14 +48,14 @@ func TestNewSessionTokenCarriesFullEntropy(t *testing.T) {
 	}
 }
 
-// TestNewSessionTokenSurvivesACookie covers the reason the encoding is base64url
+// TestNewTokenSurvivesACookie covers the reason the encoding is base64url
 // rather than plain base64. The token travels as a cookie value, and '+', '/'
 // and '=' all need escaping there: a token that had to be percent-encoded on the
 // way out and decoded on the way back would eventually be compared in the wrong
 // form and fail to match its own hash.
-func TestNewSessionTokenSurvivesACookie(t *testing.T) {
+func TestNewTokenSurvivesACookie(t *testing.T) {
 	for range 100 {
-		token, err := NewSessionToken()
+		token, err := NewToken()
 		if err != nil {
 			t.Fatalf("could not mint a token: %v", err)
 		}
@@ -72,7 +72,7 @@ func TestNewSessionTokenSurvivesACookie(t *testing.T) {
 // land on the same primary key. A hash that salted, or that mixed in the clock,
 // would make every session unfindable one request after it was created.
 func TestHashTokenIsStable(t *testing.T) {
-	token, err := NewSessionToken()
+	token, err := NewToken()
 	if err != nil {
 		t.Fatalf("could not mint a token: %v", err)
 	}

@@ -77,7 +77,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.NewSessionToken()
+	token, err := auth.NewToken()
 	if err != nil {
 		s.writeInternalError(w, "Could not generate a session token", "error", err)
 		return

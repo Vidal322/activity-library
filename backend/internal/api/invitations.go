@@ -87,7 +87,7 @@ func (s *Server) handleCreateInvitation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	token, err := auth.NewSessionToken()
+	token, err := auth.NewToken()
 	if err != nil {
 		s.writeInternalError(w, "Could not generate an invitation token", "error", err)
 		return
