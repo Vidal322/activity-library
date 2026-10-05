@@ -357,6 +357,29 @@ CREATE TRIGGER blocks_refresh_search
     AFTER INSERT OR DELETE OR UPDATE OF content, type, game_id, position ON blocks
     FOR EACH ROW EXECUTE FUNCTION blocks_refresh_search();
 
+CREATE TABLE invitations (
+    id          uuid        PRIMARY KEY DEFAULT uuidv7(),
+    email       text        NOT NULL CHECK (email <> ''),
+    token_hash  text        NOT NULL UNIQUE CHECK (token_hash <> ''),
+    invited_by  uuid        NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+    accepted_by uuid        REFERENCES users (id) ON DELETE RESTRICT,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    expires_at  timestamptz NOT NULL DEFAULT now() + interval '7 days',
+    accepted_at timestamptz,
+    revoked_at  timestamptz,
+
+    CONSTRAINT invitations_accepted_pair
+        CHECK ((accepted_at IS NULL) = (accepted_by IS NULL)),
+    CONSTRAINT invitations_accepted_or_revoked
+        CHECK (accepted_at IS NULL OR revoked_at IS NULL)
+);
+
+CREATE UNIQUE INDEX invitations_pending_email_key
+    ON invitations (lower(email))
+    WHERE accepted_at IS NULL AND revoked_at IS NULL;
+
+CREATE INDEX invitations_invited_by_idx ON invitations (invited_by);
+
 -- +goose Down
 
 DROP TRIGGER blocks_refresh_search ON blocks;
@@ -384,5 +407,6 @@ DROP TABLE locations;
 DROP TABLE categories;
 DROP TABLE category_families;
 DROP TABLE sessions;
+DROP TABLE invitations;
 DROP TABLE users;
 DROP FUNCTION set_updated_at;
