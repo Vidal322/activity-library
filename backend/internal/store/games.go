@@ -130,7 +130,7 @@ const gameAuthorsQuery = `
 
 func authorsByGame(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	q rowsQuerier,
 	gameIDs []string,
 ) (map[string][]GameAuthor, error) {
 	byGame := make(map[string][]GameAuthor, len(gameIDs))
@@ -142,7 +142,7 @@ func authorsByGame(
 		return byGame, nil
 	}
 
-	rows, err := pool.Query(ctx, gameAuthorsQuery, gameIDs)
+	rows, err := q.Query(ctx, gameAuthorsQuery, gameIDs)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -434,7 +434,17 @@ func GetGameByID(
 	gameId string,
 	userId string,
 ) (GameDetail, error) {
-	row, err := pool.Query(ctx, getGameQuery, pgx.StrictNamedArgs{
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return GameDetail{}, classify(err)
+	}
+
+	defer tx.Rollback(ctx)
+
+	row, err := tx.Query(ctx, getGameQuery, pgx.StrictNamedArgs{
 		"game_id":   gameId,
 		"viewer_id": userId,
 	})
@@ -447,25 +457,25 @@ func GetGameByID(
 		return GameDetail{}, classify(err)
 	}
 
-	byGame, err := authorsByGame(ctx, pool, []string{game.ID})
+	byGame, err := authorsByGame(ctx, tx, []string{game.ID})
 	if err != nil {
 		return GameDetail{}, err
 	}
 	game.Authors = byGame[game.ID]
 
-	categories, err := collectByGame[GameCategory](ctx, pool, getGameCategoriesQuery, gameId)
+	categories, err := collectByGame[GameCategory](ctx, tx, getGameCategoriesQuery, gameId)
 	if err != nil {
 		return GameDetail{}, err
 	}
 
-	locations, err := collectByGame[Location](ctx, pool, getGameLocationsQuery, gameId)
+	locations, err := collectByGame[Location](ctx, tx, getGameLocationsQuery, gameId)
 	if err != nil {
 		return GameDetail{}, err
 	}
 
 	materials, err := collectByGame[GameMaterial](
 		ctx,
-		pool,
+		tx,
 		getGameMaterialRequirementsQuery,
 		gameId,
 	)
@@ -473,7 +483,7 @@ func GetGameByID(
 		return GameDetail{}, err
 	}
 
-	blocks, err := collectByGame[GameBlock](ctx, pool, getGameBlocksQuery, gameId)
+	blocks, err := collectByGame[GameBlock](ctx, tx, getGameBlocksQuery, gameId)
 	if err != nil {
 		return GameDetail{}, err
 	}
@@ -489,10 +499,10 @@ func GetGameByID(
 
 func collectByGame[T any](
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	q rowsQuerier,
 	query, gameId string,
 ) ([]T, error) {
-	rows, err := pool.Query(ctx, query, gameId)
+	rows, err := q.Query(ctx, query, gameId)
 	if err != nil {
 		return nil, classify(err)
 	}
