@@ -80,3 +80,81 @@ func GetInvitationByTokenHash(
 	}
 	return invitation, nil
 }
+
+const lockOpenInvitationQuery = getInvitationByTokenHashQuery + `
+	FOR UPDATE
+`
+
+const createInvitedUserQuery = `
+	INSERT INTO users (name, email, pass_hash, img, role)
+	VALUES (@name, @email, @pass_hash, @img, 'member')
+	RETURNING id, name, email, pass_hash, img, role, active, created_at, updated_at
+`
+
+const markInvitationAcceptedQuery = `
+	UPDATE invitations
+	SET accepted_by = @accepted_by,
+	    accepted_at = now()
+	WHERE id = @id
+`
+
+// AcceptInvitation creates the account an open invitation was for and marks
+// the invitation used, in one transaction
+// An unknown, used, revoked or expired token is ErrNotFound. An email that
+// already has an active account is ErrConflict on users_email_key, and the
+// invitation stays open.
+func AcceptInvitation(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	tokenHash string,
+	name string,
+	passHash string,
+	img *string,
+) (User, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return User{}, classify(err)
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, lockOpenInvitationQuery, pgx.NamedArgs{
+		"token_hash": tokenHash,
+	})
+	if err != nil {
+		return User{}, classify(err)
+	}
+
+	invitation, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[Invitation])
+	if err != nil {
+		return User{}, classify(err)
+	}
+
+	rows, err = tx.Query(ctx, createInvitedUserQuery, pgx.NamedArgs{
+		"name":      name,
+		"email":     invitation.Email,
+		"pass_hash": passHash,
+		"img":       img,
+	})
+	if err != nil {
+		return User{}, classify(err)
+	}
+
+	user, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[User])
+	if err != nil {
+		return User{}, classify(err)
+	}
+
+	_, err = tx.Exec(ctx, markInvitationAcceptedQuery, pgx.NamedArgs{
+		"id":          invitation.ID,
+		"accepted_by": user.ID,
+	})
+	if err != nil {
+		return User{}, classify(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return User{}, classify(err)
+	}
+
+	return user, nil
+}

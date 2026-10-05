@@ -7,6 +7,7 @@ import (
 	"net/mail"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Vidal322/activity-library/internal/auth"
 	"github.com/Vidal322/activity-library/internal/store"
@@ -155,5 +156,73 @@ func (s *Server) handleLookupInvitation(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		slog.Error("Could not write invitation lookup response", "error", err)
+	}
+}
+
+type acceptInvitationRequest struct {
+	Token    string  `json:"token"`
+	Name     string  `json:"name"`
+	Password string  `json:"password"`
+	Img      *string `json:"img"`
+}
+
+func (req acceptInvitationRequest) validate() string {
+	switch {
+	case req.Token == "", req.Name == "", req.Password == "":
+		return "token, name and password are required"
+
+	case utf8.RuneCountInString(req.Name) > maxName:
+		return fmt.Sprintf("name must not be longer than %d characters", maxName)
+
+	case utf8.RuneCountInString(req.Password) < minPassword:
+		return fmt.Sprintf("password must be at least %d characters", minPassword)
+
+	case len(req.Password) > maxPassword:
+		return fmt.Sprintf("password must not be longer than %d characters", maxPassword)
+	}
+
+	return ""
+}
+
+func (s *Server) handleAcceptInvitation(w http.ResponseWriter, r *http.Request) {
+	var req acceptInvitationRequest
+	err := readJSON(w, r, &req)
+	if err != nil {
+		s.writeBadRequest(w, err.Error())
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+
+	msg := req.validate()
+	if msg != "" {
+		s.writeUnprocessable(w, msg)
+		return
+	}
+
+	hash, err := auth.Hash(req.Password)
+	if err != nil {
+		s.writeInternalError(w, "Could not hash a password", "error", err)
+		return
+	}
+
+	user, err := store.AcceptInvitation(
+		r.Context(),
+		s.pool,
+		auth.HashToken(req.Token),
+		req.Name,
+		hash,
+		req.Img,
+	)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	w.Header().Set("Location", apiPrefix+"/users/"+user.ID)
+
+	err = writeJSON(w, http.StatusCreated, newUserDetail(user))
+	if err != nil {
+		slog.Error("Could not write invitation accepted response", "error", err)
 	}
 }
