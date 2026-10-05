@@ -11,7 +11,7 @@ import (
 type Invitation struct {
 	ID         string     `db:"id"`
 	Email      string     `db:"email"`
-	TokenHash  string     `db:"token_hash" json:"-"`
+	TokenHash  string     `db:"token_hash"  json:"-"`
 	InvitedBy  string     `db:"invited_by"`
 	AcceptedBy *string    `db:"accepted_by"`
 	CreatedAt  time.Time  `db:"created_at"`
@@ -40,6 +40,35 @@ func CreateInvitation(
 		"invited_by": invitedBy,
 		"token_hash": tokenHash,
 		"expires_at": expiresAt,
+	})
+	if err != nil {
+		return Invitation{}, classify(err)
+	}
+
+	invitation, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[Invitation])
+	if err != nil {
+		return Invitation{}, classify(err)
+	}
+	return invitation, nil
+}
+
+const getInvitationByTokenHashQuery = `
+	SELECT id, email, token_hash, invited_by, accepted_by,
+	       created_at, expires_at, accepted_at, revoked_at
+	FROM invitations
+	WHERE token_hash = @token_hash
+	  AND accepted_at IS NULL
+	  AND revoked_at IS NULL
+	  AND expires_at > now()
+`
+
+func GetInvitationByTokenHash(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	tokenHash string,
+) (Invitation, error) {
+	rows, err := pool.Query(ctx, getInvitationByTokenHashQuery, pgx.NamedArgs{
+		"token_hash": tokenHash,
 	})
 	if err != nil {
 		return Invitation{}, classify(err)

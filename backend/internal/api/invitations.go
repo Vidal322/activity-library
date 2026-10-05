@@ -115,3 +115,45 @@ func (s *Server) handleCreateInvitation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 }
+
+// invitationPreview is what the invitee sees before signing up.
+type invitationPreview struct {
+	Email     string    `json:"email"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type lookupInvitationRequest struct {
+	Token string `json:"token"`
+}
+
+func (s *Server) handleLookupInvitation(w http.ResponseWriter, r *http.Request) {
+	var req lookupInvitationRequest
+	err := readJSON(w, r, &req)
+	if err != nil {
+		s.writeBadRequest(w, err.Error())
+		return
+	}
+
+	if req.Token == "" {
+		s.writeUnprocessable(w, "token is required")
+		return
+	}
+
+	invitation, err := store.GetInvitationByTokenHash(
+		r.Context(),
+		s.pool,
+		auth.HashToken(req.Token),
+	)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	err = writeJSON(w, http.StatusOK, invitationPreview{
+		Email:     invitation.Email,
+		ExpiresAt: invitation.ExpiresAt,
+	})
+	if err != nil {
+		slog.Error("Could not write invitation lookup response", "error", err)
+	}
+}
