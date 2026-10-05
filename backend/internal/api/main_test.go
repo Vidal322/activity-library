@@ -33,6 +33,11 @@ const queryTimeout = 5 * time.Second
 // duration would expose.
 const testSessionTTL = 720 * time.Hour
 
+// testInvitationTTL is the invitation lifetime the test server runs with. Like
+// the session one, a zero value would create invitations that are already
+// expired.
+const testInvitationTTL = 168 * time.Hour
+
 // newTestServer truncates the database and serves the real router over a real
 // socket, so a test exercises routing, middleware and encoding rather than
 // calling a handler function.
@@ -62,6 +67,9 @@ func testConfig() config.Config {
 		Session: config.SessionConfig{
 			TTL:          testSessionTTL,
 			CookieSecure: false,
+		},
+		Invitation: config.InvitationConfig{
+			TTL: testInvitationTTL,
 		},
 	}
 }

@@ -18,17 +18,18 @@ const (
 )
 
 var conflictMessages = map[string]string{
-	"users_email_key":            "that email is already registered",
-	"category_families_name_key": "a family with that name already exists",
-	"categories_family_name_key": "a category with that name already exists in this family",
-	"locations_name_key":         "a location with that name already exists",
-	"materials_name_key":         "a material with that name already exists",
-	"blocks_game_position_key":   "another block already occupies that position",
-	"game_authors_pkey":          "that user is already an author of this game",
-	"game_categories_pkey":       "that category is already on this game",
-	"game_locations_pkey":        "that location is already on this game",
-	"game_materials_pkey":        "that material is already on this game",
-	"game_inspirations_pkey":     "that game is already listed as an inspiration",
+	"users_email_key":               "that email is already registered",
+	"category_families_name_key":    "a family with that name already exists",
+	"categories_family_name_key":    "a category with that name already exists in this family",
+	"locations_name_key":            "a location with that name already exists",
+	"materials_name_key":            "a material with that name already exists",
+	"blocks_game_position_key":      "another block already occupies that position",
+	"game_authors_pkey":             "that user is already an author of this game",
+	"game_categories_pkey":          "that category is already on this game",
+	"game_locations_pkey":           "that location is already on this game",
+	"game_materials_pkey":           "that material is already on this game",
+	"game_inspirations_pkey":        "that game is already listed as an inspiration",
+	"invitations_pending_email_key": "that email already has an open invitation",
 }
 
 var invalidMessages = map[string]string{
@@ -67,6 +68,7 @@ var invalidMessages = map[string]string{
 	"game_inspirations_inspiration_id_fkey": "unknown inspiration game",
 	"game_materials_material_id_fkey":       "unknown material",
 	"game_materials_game_fkey":              "this game is marked as needing no materials; unset no_materials before adding any",
+	"invitations_invited_by_fkey":           "unknown inviting user",
 }
 
 var inUseMessages = map[string]string{

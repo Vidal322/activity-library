@@ -8,9 +8,10 @@ import (
 )
 
 type Config struct {
-	Addr    string        `env:"ADDR" envDefault:":8080"`
-	DB      DBConfig      `                              envPrefix:"DB_"`
-	Session SessionConfig `                              envPrefix:"SESSION_"`
+	Addr       string           `env:"ADDR" envDefault:":8080"`
+	DB         DBConfig         `                              envPrefix:"DB_"`
+	Session    SessionConfig    `                              envPrefix:"SESSION_"`
+	Invitation InvitationConfig `                              envPrefix:"INVITATION_"`
 }
 
 type DBConfig struct {
@@ -22,6 +23,10 @@ type DBConfig struct {
 type SessionConfig struct {
 	TTL          time.Duration `env:"TTL"           envDefault:"720h"`
 	CookieSecure bool          `env:"COOKIE_SECURE" envDefault:"true"`
+}
+
+type InvitationConfig struct {
+	TTL time.Duration `env:"TTL" envDefault:"168h"`
 }
 
 // Load reads the process environment only. Populating that environment from a

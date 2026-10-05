@@ -50,6 +50,12 @@ func (s *Server) routes() http.Handler {
 			r.Get("/locations", s.handleLocationsList)
 			r.Get("/materials", s.handleMaterialsList)
 			r.Get("/users/{id}", s.handleGetUser)
+
+			r.Group(func(r chi.Router) {
+				r.Use(s.requireAdmin)
+
+				r.Post("/invitations", s.handleCreateInvitation)
+			})
 		})
 	})
 
