@@ -14,6 +14,7 @@ const (
 	msgForbidden          = "you did not write this game"
 	msgInternalError      = "internal server error"
 	msgIncompleteDraft    = "this draft is not ready to publish"
+	msgNotAdmin           = "you need admin permissions"
 )
 
 var conflictMessages = map[string]string{
@@ -170,5 +171,11 @@ func (s *Server) writeInternalError(w http.ResponseWriter, msg string, args ...a
 
 	if err := writeErrorJSON(w, http.StatusInternalServerError, msgInternalError); err != nil {
 		slog.Error("Failed to write internal error response", "error", err)
+	}
+}
+
+func (s *Server) writeForbidden(w http.ResponseWriter, msg string) {
+	if err := writeErrorJSON(w, http.StatusForbidden, msg); err != nil {
+		slog.Error("Failed to write forbidden request response", "error", err)
 	}
 }

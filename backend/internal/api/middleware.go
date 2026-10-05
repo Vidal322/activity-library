@@ -41,6 +41,29 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := userIDFromContext(r.Context())
+		if !ok {
+			s.writeInternalError(w, "requireAdmin without requireAuth", "path", r.URL.Path)
+			return
+		}
+
+		user, err := store.GetUserByID(r.Context(), s.pool, userID)
+		if err != nil {
+			s.writeStoreError(w, err)
+			return
+		}
+
+		if user.Role != "admin" {
+			s.writeForbidden(w, msgNotAdmin)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func userIDFromContext(ctx context.Context) (string, bool) {
 	id, ok := ctx.Value(userIDKey).(string)
 	return id, ok
