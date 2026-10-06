@@ -57,6 +57,7 @@ func (s *Server) routes() http.Handler {
 				r.Use(s.requireAdmin)
 
 				r.Post("/invitations", s.handleCreateInvitation)
+				r.Post("/invitations/{id}/revoke", s.handleRevokeInvitation)
 			})
 		})
 	})

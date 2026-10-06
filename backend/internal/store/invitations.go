@@ -14,6 +14,7 @@ type Invitation struct {
 	TokenHash  string     `db:"token_hash"  json:"-"`
 	InvitedBy  string     `db:"invited_by"`
 	AcceptedBy *string    `db:"accepted_by"`
+	RevokedBy  *string    `db:"revoked_by"`
 	CreatedAt  time.Time  `db:"created_at"`
 	ExpiresAt  time.Time  `db:"expires_at"`
 	AcceptedAt *time.Time `db:"accepted_at"`
@@ -23,7 +24,7 @@ type Invitation struct {
 const createInvitationQuery = `
 	INSERT INTO invitations (email, token_hash, invited_by, expires_at)
 	VALUES (@email, @token_hash, @invited_by, @expires_at)
-	RETURNING id, email, token_hash, invited_by, accepted_by,
+	RETURNING id, email, token_hash, invited_by, accepted_by, revoked_by,
 	          created_at, expires_at, accepted_at, revoked_at
 `
 
@@ -53,7 +54,7 @@ func CreateInvitation(
 }
 
 const getInvitationByTokenHashQuery = `
-	SELECT id, email, token_hash, invited_by, accepted_by,
+	SELECT id, email, token_hash, invited_by, accepted_by, revoked_by,
 	       created_at, expires_at, accepted_at, revoked_at
 	FROM invitations
 	WHERE token_hash = @token_hash
@@ -99,8 +100,7 @@ const markInvitationAcceptedQuery = `
 `
 
 // AcceptInvitation creates the account an open invitation was for and marks
-// the invitation used, in one transaction
-// An unknown, used, revoked or expired token is ErrNotFound. An email that
+// the invitation used, in one transaction. An unknown, used, revoked or expired token is ErrNotFound. An email that
 // already has an active account is ErrConflict on users_email_key, and the
 // invitation stays open.
 func AcceptInvitation(
@@ -157,4 +157,40 @@ func AcceptInvitation(
 	}
 
 	return user, nil
+}
+
+const revokeInvitationQuery = `
+	UPDATE invitations
+	SET revoked_at = now(),
+	    revoked_by = @revoked_by
+	WHERE id = @id
+	  AND accepted_at IS NULL
+	  AND revoked_at IS NULL
+	RETURNING id, email, token_hash, invited_by, accepted_by, revoked_by,
+	          created_at, expires_at, accepted_at, revoked_at
+`
+
+// RevokeInvitation closes an invitation nobody has used yet and records which
+// admin closed it.
+func RevokeInvitation(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	invitationID string,
+	revokedBy string,
+) (Invitation, error) {
+	rows, err := pool.Query(
+		ctx,
+		revokeInvitationQuery,
+		pgx.NamedArgs{"id": invitationID, "revoked_by": revokedBy},
+	)
+	if err != nil {
+		return Invitation{}, classify(err)
+	}
+
+	inv, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[Invitation])
+	if err != nil {
+		return Invitation{}, classify(err)
+	}
+
+	return inv, nil
 }

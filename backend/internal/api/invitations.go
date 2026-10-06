@@ -9,6 +9,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/Vidal322/activity-library/internal/auth"
 	"github.com/Vidal322/activity-library/internal/store"
 )
@@ -20,6 +23,7 @@ type invitationDetail struct {
 	Email      string     `json:"email"`
 	InvitedBy  string     `json:"invited_by"`
 	AcceptedBy *string    `json:"accepted_by"`
+	RevokedBy  *string    `json:"revoked_by"`
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	AcceptedAt *time.Time `json:"accepted_at"`
@@ -32,6 +36,7 @@ func newInvitationDetail(i store.Invitation) invitationDetail {
 		Email:      i.Email,
 		InvitedBy:  i.InvitedBy,
 		AcceptedBy: i.AcceptedBy,
+		RevokedBy:  i.RevokedBy,
 		CreatedAt:  i.CreatedAt,
 		ExpiresAt:  i.ExpiresAt,
 		AcceptedAt: i.AcceptedAt,
@@ -39,7 +44,8 @@ func newInvitationDetail(i store.Invitation) invitationDetail {
 	}
 }
 
-// token is passed temporarly while the email service is not setup
+// createdInvitation carries the raw token, which exists nowhere else: only its
+// hash is stored. Until invitations are emailed, the admin passes it on by hand.
 type createdInvitation struct {
 	invitationDetail
 	Token string `json:"token"`
@@ -224,5 +230,31 @@ func (s *Server) handleAcceptInvitation(w http.ResponseWriter, r *http.Request) 
 	err = writeJSON(w, http.StatusCreated, newUserDetail(user))
 	if err != nil {
 		slog.Error("Could not write invitation accepted response", "error", err)
+	}
+}
+
+func (s *Server) handleRevokeInvitation(w http.ResponseWriter, r *http.Request) {
+	invitationID := chi.URLParam(r, "id")
+	var parsed pgtype.UUID
+	if err := parsed.Scan(invitationID); err != nil {
+		s.writeBadRequest(w, "malformed invitation id")
+		return
+	}
+
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		s.writeInternalError(w, "no user on an authenticated route", "path", r.URL.Path)
+		return
+	}
+
+	inv, err := store.RevokeInvitation(r.Context(), s.pool, invitationID, userID)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	err = writeJSON(w, http.StatusOK, newInvitationDetail(inv))
+	if err != nil {
+		slog.Error("Could not write invitation revoked response", "error", err)
 	}
 }

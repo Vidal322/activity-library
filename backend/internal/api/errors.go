@@ -69,6 +69,8 @@ var invalidMessages = map[string]string{
 	"game_materials_material_id_fkey":       "unknown material",
 	"game_materials_game_fkey":              "this game is marked as needing no materials; unset no_materials before adding any",
 	"invitations_invited_by_fkey":           "unknown inviting user",
+	"invitations_accepted_by_fkey":          "unknown invite accepting user",
+	"invitations_revoked_by_fkey":           "unknown invite revoking user",
 }
 
 var inUseMessages = map[string]string{

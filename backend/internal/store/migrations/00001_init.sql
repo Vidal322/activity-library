@@ -363,6 +363,7 @@ CREATE TABLE invitations (
     token_hash  text        NOT NULL UNIQUE CHECK (token_hash <> ''),
     invited_by  uuid        NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
     accepted_by uuid        REFERENCES users (id) ON DELETE RESTRICT,
+    revoked_by  uuid        REFERENCES users (id) ON DELETE RESTRICT,
     created_at  timestamptz NOT NULL DEFAULT now(),
     expires_at  timestamptz NOT NULL DEFAULT now() + interval '7 days',
     accepted_at timestamptz,
@@ -370,6 +371,8 @@ CREATE TABLE invitations (
 
     CONSTRAINT invitations_accepted_pair
         CHECK ((accepted_at IS NULL) = (accepted_by IS NULL)),
+    CONSTRAINT invitations_revoked_pair
+        CHECK ((revoked_at IS NULL) = (revoked_by IS NULL)),
     CONSTRAINT invitations_accepted_or_revoked
         CHECK (accepted_at IS NULL OR revoked_at IS NULL)
 );
