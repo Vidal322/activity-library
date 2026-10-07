@@ -383,6 +383,26 @@ CREATE UNIQUE INDEX invitations_pending_email_key
 
 CREATE INDEX invitations_invited_by_idx ON invitations (invited_by);
 
+CREATE TABLE join_requests (
+    id         uuid        PRIMARY KEY DEFAULT uuidv7(),
+    requester  uuid        NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+    message    text        NOT NULL DEFAULT '',
+    state      text        NOT NULL DEFAULT 'pending'
+                           CHECK (state IN ('pending', 'approved', 'rejected')),
+    decided_by uuid        REFERENCES users (id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    decided_at timestamptz,
+
+    CONSTRAINT join_requests_decided_pair
+        CHECK ((decided_by IS NULL) = (decided_at IS NULL)),
+    CONSTRAINT join_requests_decided_at_iff_pending
+        CHECK ((decided_at IS NULL) = (state = 'pending'))
+);
+
+CREATE UNIQUE INDEX join_requests_pending
+    ON join_requests (requester)
+    WHERE state = 'pending';
+
 -- +goose Down
 
 DROP TRIGGER blocks_refresh_search ON blocks;
@@ -411,5 +431,6 @@ DROP TABLE categories;
 DROP TABLE category_families;
 DROP TABLE sessions;
 DROP TABLE invitations;
+DROP TABLE join_requests;
 DROP TABLE users;
 DROP FUNCTION set_updated_at;
