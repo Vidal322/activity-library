@@ -30,6 +30,7 @@ var conflictMessages = map[string]string{
 	"game_materials_pkey":           "that material is already on this game",
 	"game_inspirations_pkey":        "that game is already listed as an inspiration",
 	"invitations_pending_email_key": "that email already has an open invitation",
+	"join_requests_pending":         "you already have a pending join request",
 }
 
 var invalidMessages = map[string]string{
@@ -71,6 +72,7 @@ var invalidMessages = map[string]string{
 	"invitations_invited_by_fkey":           "unknown inviting user",
 	"invitations_accepted_by_fkey":          "unknown invite accepting user",
 	"invitations_revoked_by_fkey":           "unknown invite revoking user",
+	"join_requests_requester_fkey":          "unknown requesting user",
 }
 
 var inUseMessages = map[string]string{

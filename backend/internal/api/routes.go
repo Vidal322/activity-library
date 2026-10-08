@@ -36,7 +36,8 @@ func (s *Server) routes() http.Handler {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
-
+			// TODO: change from this middleware to one with only authentication
+			r.Post("/joinrequests", s.handleCreateJoinRequest)
 			r.Get("/games", s.handleGamesList)
 			r.Post("/games", s.handleCreateDraft)
 			r.Patch("/games/{id}", s.handleEditGame)
