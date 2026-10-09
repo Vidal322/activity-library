@@ -63,6 +63,7 @@ func (s *Server) routes() http.Handler {
 				r.Post("/invitations/{id}/revoke", s.handleRevokeInvitation)
 				r.Get("/joinrequests", s.handleListPendingJoinRequests)
 				r.Post("/joinrequests/{id}/accept", s.handleDecideJoinRequest(store.AcceptJoinRequest))
+				r.Post("/joinrequests/{id}/reject", s.handleDecideJoinRequest(store.RejectJoinRequest))
 			})
 		})
 	})

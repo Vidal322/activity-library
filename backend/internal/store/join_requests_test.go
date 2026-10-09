@@ -77,12 +77,7 @@ func TestCreateJoinRequestAfterTheOldOneWasRejected(t *testing.T) {
 		t.Fatalf("could not create the first join request: %v", err)
 	}
 
-	if _, err := pool.Exec(ctx,
-		`UPDATE join_requests
-		 SET state = 'rejected', decided_by = $2, decided_at = now()
-		 WHERE id = $1`,
-		first.ID, admin,
-	); err != nil {
+	if _, err := store.RejectJoinRequest(ctx, pool, first.ID, admin); err != nil {
 		t.Fatalf("could not reject the first join request: %v", err)
 	}
 
@@ -176,12 +171,7 @@ func TestListPendingJoinRequestsOnlyListsPendingOldestFirst(t *testing.T) {
 	); err != nil {
 		t.Fatalf("could not backdate the older join request: %v", err)
 	}
-	if _, err := pool.Exec(ctx,
-		`UPDATE join_requests
-		 SET state = 'rejected', decided_by = $2, decided_at = now()
-		 WHERE id = $1`,
-		rejectedReq.ID, admin,
-	); err != nil {
+	if _, err := store.RejectJoinRequest(ctx, pool, rejectedReq.ID, admin); err != nil {
 		t.Fatalf("could not reject the join request: %v", err)
 	}
 
@@ -286,12 +276,7 @@ func TestAcceptJoinRequestRefusesARejectedRequest(t *testing.T) {
 		t.Fatalf("could not create a join request: %v", err)
 	}
 
-	if _, err := pool.Exec(ctx,
-		`UPDATE join_requests
-		 SET state = 'rejected', decided_by = $2, decided_at = now()
-		 WHERE id = $1`,
-		created.ID, admin,
-	); err != nil {
+	if _, err := store.RejectJoinRequest(ctx, pool, created.ID, admin); err != nil {
 		t.Fatalf("could not reject the join request: %v", err)
 	}
 
@@ -341,5 +326,104 @@ func TestAcceptJoinRequestNeverDemotesTheRequester(t *testing.T) {
 	}
 	if user.Role != "admin" {
 		t.Errorf("requester role = %q, want %q", user.Role, "admin")
+	}
+}
+
+func TestRejectJoinRequestRejectsWithoutPromoting(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	admin := insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "admin", nil)
+	outsider := insertUser(t, pool, ctx, "Rui Costa", "rui@example.test", "outsider", nil)
+
+	created, err := store.CreateJoinRequest(ctx, pool, outsider, "Posso entrar?")
+	if err != nil {
+		t.Fatalf("could not create a join request: %v", err)
+	}
+
+	got, err := store.RejectJoinRequest(ctx, pool, created.ID, admin)
+	if err != nil {
+		t.Fatalf("could not reject the join request: %v", err)
+	}
+
+	if got.ID != created.ID {
+		t.Errorf("ID = %q, want %q", got.ID, created.ID)
+	}
+	if got.State != "rejected" {
+		t.Errorf("State = %q, want %q", got.State, "rejected")
+	}
+	if got.DecidedBy == nil || *got.DecidedBy != admin {
+		t.Errorf("DecidedBy = %v, want %q", got.DecidedBy, admin)
+	}
+	if got.DecidedAt == nil {
+		t.Error("DecidedAt is nil, want the decision time")
+	}
+
+	user, err := store.GetUserByID(ctx, pool, outsider)
+	if err != nil {
+		t.Fatalf("could not read the requester back: %v", err)
+	}
+	if user.Role != "outsider" {
+		t.Errorf("requester role = %q, want %q", user.Role, "outsider")
+	}
+}
+
+func TestRejectJoinRequestOnlyDecidesOnce(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	admin := insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "admin", nil)
+	outsider := insertUser(t, pool, ctx, "Rui Costa", "rui@example.test", "outsider", nil)
+
+	created, err := store.CreateJoinRequest(ctx, pool, outsider, "")
+	if err != nil {
+		t.Fatalf("could not create a join request: %v", err)
+	}
+
+	if _, err := store.RejectJoinRequest(ctx, pool, created.ID, admin); err != nil {
+		t.Fatalf("could not reject the join request: %v", err)
+	}
+
+	_, err = store.RejectJoinRequest(ctx, pool, created.ID, admin)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("error = %v, want %v", err, store.ErrNotFound)
+	}
+}
+
+func TestRejectJoinRequestRefusesAnAcceptedRequest(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	admin := insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "admin", nil)
+	outsider := insertUser(t, pool, ctx, "Rui Costa", "rui@example.test", "outsider", nil)
+
+	created, err := store.CreateJoinRequest(ctx, pool, outsider, "")
+	if err != nil {
+		t.Fatalf("could not create a join request: %v", err)
+	}
+
+	if _, err := store.AcceptJoinRequest(ctx, pool, created.ID, admin); err != nil {
+		t.Fatalf("could not accept the join request: %v", err)
+	}
+
+	_, err = store.RejectJoinRequest(ctx, pool, created.ID, admin)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("error = %v, want %v", err, store.ErrNotFound)
+	}
+
+	user, err := store.GetUserByID(ctx, pool, outsider)
+	if err != nil {
+		t.Fatalf("could not read the requester back: %v", err)
+	}
+	if user.Role != "member" {
+		t.Errorf("requester role = %q, want %q", user.Role, "member")
+	}
+}
+
+func TestRejectJoinRequestRefusesAnUnknownRequest(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	admin := insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "admin", nil)
+
+	_, err := store.RejectJoinRequest(ctx, pool, "10000000-0000-7000-8000-0000000000aa", admin)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("error = %v, want %v", err, store.ErrNotFound)
 	}
 }

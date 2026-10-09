@@ -148,3 +148,12 @@ func AcceptJoinRequest(
 
 	return joinReq, nil
 }
+
+func RejectJoinRequest(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	joinRequestID string,
+	decidedBy string,
+) (JoinRequest, error) {
+	return decideJoinRequest(ctx, pool, joinRequestID, decidedBy, "rejected")
+}

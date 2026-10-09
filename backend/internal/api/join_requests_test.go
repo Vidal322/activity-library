@@ -299,3 +299,104 @@ func TestHandleAcceptJoinRequestIsForAdmins(t *testing.T) {
 		t.Errorf("requester role = %q, want %q", role, "outsider")
 	}
 }
+
+func TestHandleRejectJoinRequestRejectsWithoutPromoting(t *testing.T) {
+	baseURL, pool := newAdminTestServer(t)
+
+	outsiderID, joinReqID := seedOutsiderJoinRequest(t, pool)
+
+	status, raw := send(t, http.MethodPost, baseURL+"/v1/joinrequests/"+joinReqID+"/reject", ``, true)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d — body %s", status, http.StatusOK, raw)
+	}
+
+	var got joinRequestDetail
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("could not decode the response %s: %v", raw, err)
+	}
+
+	if got.ID != joinReqID {
+		t.Errorf("ID = %q, want %q", got.ID, joinReqID)
+	}
+	if got.State != "rejected" {
+		t.Errorf("State = %q, want %q", got.State, "rejected")
+	}
+	if got.DecidedBy == nil || *got.DecidedBy != testSessionUserID {
+		t.Errorf("DecidedBy = %v, want the session account %q", got.DecidedBy, testSessionUserID)
+	}
+	if got.DecidedAt == nil {
+		t.Error("DecidedAt is nil, want the decision time")
+	}
+
+	var role string
+	if err := pool.QueryRow(testContext(t),
+		`SELECT role FROM users WHERE id = $1`, outsiderID,
+	).Scan(&role); err != nil {
+		t.Fatalf("could not read the requester back: %v", err)
+	}
+	if role != "outsider" {
+		t.Errorf("requester role = %q, want %q", role, "outsider")
+	}
+}
+
+func TestHandleRejectJoinRequestOnlyDecidesOnce(t *testing.T) {
+	baseURL, pool := newAdminTestServer(t)
+
+	_, joinReqID := seedOutsiderJoinRequest(t, pool)
+
+	status, raw := send(t, http.MethodPost, baseURL+"/v1/joinrequests/"+joinReqID+"/reject", ``, true)
+	if status != http.StatusOK {
+		t.Fatalf("first: status = %d, want %d — body %s", status, http.StatusOK, raw)
+	}
+
+	status, raw = send(t, http.MethodPost, baseURL+"/v1/joinrequests/"+joinReqID+"/reject", ``, true)
+	if status != http.StatusNotFound {
+		t.Fatalf("second: status = %d, want %d — body %s", status, http.StatusNotFound, raw)
+	}
+
+	status, raw = send(t, http.MethodPost, baseURL+"/v1/joinrequests/"+joinReqID+"/accept", ``, true)
+	if status != http.StatusNotFound {
+		t.Fatalf("accept after reject: status = %d, want %d — body %s", status, http.StatusNotFound, raw)
+	}
+}
+
+func TestHandleRejectJoinRequestRefusesABadID(t *testing.T) {
+	baseURL, _ := newAdminTestServer(t)
+
+	status, raw := send(t, http.MethodPost, baseURL+"/v1/joinrequests/not-a-uuid/reject", ``, true)
+	if status != http.StatusBadRequest {
+		t.Errorf("malformed: status = %d, want %d — body %s", status, http.StatusBadRequest, raw)
+	}
+
+	status, raw = send(t, http.MethodPost, baseURL+"/v1/joinrequests/10000000-0000-7000-8000-0000000000aa/reject", ``, true)
+	if status != http.StatusNotFound {
+		t.Errorf("unknown: status = %d, want %d — body %s", status, http.StatusNotFound, raw)
+	}
+}
+
+func TestHandleRejectJoinRequestIsForAdmins(t *testing.T) {
+	srv, pool := newAuthedTestServer(t)
+
+	_, joinReqID := seedOutsiderJoinRequest(t, pool)
+
+	status, body := send(t, http.MethodPost, srv.URL+"/v1/joinrequests/"+joinReqID+"/reject", ``, true)
+	if status != http.StatusForbidden {
+		t.Fatalf("outsider: status = %d, want %d — body %s", status, http.StatusForbidden, body)
+	}
+	assertErrorMessage(t, body, msgNotAdmin)
+
+	status, body = send(t, http.MethodPost, srv.URL+"/v1/joinrequests/"+joinReqID+"/reject", ``, false)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("anonymous: status = %d, want %d — body %s", status, http.StatusUnauthorized, body)
+	}
+
+	var state string
+	if err := pool.QueryRow(testContext(t),
+		`SELECT state FROM join_requests WHERE id = $1`, joinReqID,
+	).Scan(&state); err != nil {
+		t.Fatalf("could not read the join request back: %v", err)
+	}
+	if state != "pending" {
+		t.Errorf("state = %q, want %q", state, "pending")
+	}
+}
