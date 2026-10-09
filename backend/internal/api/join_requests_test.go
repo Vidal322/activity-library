@@ -107,3 +107,73 @@ func TestHandleCreateJoinRequestRefusesASecondPendingRequest(t *testing.T) {
 	}
 	assertErrorMessage(t, body, "you already have a pending join request")
 }
+
+func listPendingJoinRequests(t *testing.T, baseURL string) (string, pendingJoinRequestsResponse) {
+	t.Helper()
+
+	status, raw := send(t, http.MethodGet, baseURL+"/v1/joinrequests", ``, true)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d — body %s", status, http.StatusOK, raw)
+	}
+
+	var got pendingJoinRequestsResponse
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("could not decode the response %s: %v", raw, err)
+	}
+
+	return string(raw), got
+}
+
+func TestHandleListPendingJoinRequestsReturnsPendingRequests(t *testing.T) {
+	baseURL, _ := newAdminTestServer(t)
+
+	created := createJoinRequest(t, baseURL, `{"message":"Posso entrar?"}`)
+
+	_, got := listPendingJoinRequests(t, baseURL)
+
+	if len(got.JoinRequests) != 1 {
+		t.Fatalf("got %d join requests, want 1: %+v", len(got.JoinRequests), got)
+	}
+
+	jr := got.JoinRequests[0]
+	if jr.ID != created.ID {
+		t.Errorf("ID = %q, want %q", jr.ID, created.ID)
+	}
+	if jr.RequesterID != testSessionUserID {
+		t.Errorf("RequesterID = %q, want %q", jr.RequesterID, testSessionUserID)
+	}
+	if jr.RequesterName != "Session User" {
+		t.Errorf("RequesterName = %q, want %q", jr.RequesterName, "Session User")
+	}
+	if jr.RequesterEmail != sessionUserEmail {
+		t.Errorf("RequesterEmail = %q, want %q", jr.RequesterEmail, sessionUserEmail)
+	}
+	if jr.Message != "Posso entrar?" || jr.State != "pending" {
+		t.Errorf("join request fields not returned: %+v", jr)
+	}
+}
+
+func TestHandleListPendingJoinRequestsIsAnEmptyArray(t *testing.T) {
+	baseURL, _ := newAdminTestServer(t)
+
+	raw, _ := listPendingJoinRequests(t, baseURL)
+
+	if strings.TrimSpace(raw) != `{"join_requests":[]}` {
+		t.Errorf("body = %s, want an empty join_requests array", raw)
+	}
+}
+
+func TestHandleListPendingJoinRequestsIsForAdmins(t *testing.T) {
+	srv, _ := newAuthedTestServer(t)
+
+	status, body := send(t, http.MethodGet, srv.URL+"/v1/joinrequests", ``, true)
+	if status != http.StatusForbidden {
+		t.Fatalf("outsider: status = %d, want %d — body %s", status, http.StatusForbidden, body)
+	}
+	assertErrorMessage(t, body, msgNotAdmin)
+
+	status, body = send(t, http.MethodGet, srv.URL+"/v1/joinrequests", ``, false)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("anonymous: status = %d, want %d — body %s", status, http.StatusUnauthorized, body)
+	}
+}

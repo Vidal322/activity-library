@@ -148,3 +148,70 @@ func TestJoinRequestDecisionMustMatchState(t *testing.T) {
 		})
 	}
 }
+
+func TestListPendingJoinRequestsOnlyListsPendingOldestFirst(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	admin := insertUser(t, pool, ctx, "Ana Marques", "ana@example.test", "admin", nil)
+	older := insertUser(t, pool, ctx, "Rui Costa", "rui@example.test", "outsider", nil)
+	newer := insertUser(t, pool, ctx, "Eva Lopes", "eva@example.test", "outsider", nil)
+	rejected := insertUser(t, pool, ctx, "Luís Sá", "luis@example.test", "outsider", nil)
+
+	newerReq, err := store.CreateJoinRequest(ctx, pool, newer, "newer")
+	if err != nil {
+		t.Fatalf("could not create the newer join request: %v", err)
+	}
+	olderReq, err := store.CreateJoinRequest(ctx, pool, older, "older")
+	if err != nil {
+		t.Fatalf("could not create the older join request: %v", err)
+	}
+	rejectedReq, err := store.CreateJoinRequest(ctx, pool, rejected, "rejected")
+	if err != nil {
+		t.Fatalf("could not create the rejected join request: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`UPDATE join_requests SET created_at = now() - interval '1 day' WHERE id = $1`,
+		olderReq.ID,
+	); err != nil {
+		t.Fatalf("could not backdate the older join request: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE join_requests
+		 SET state = 'rejected', decided_by = $2, decided_at = now()
+		 WHERE id = $1`,
+		rejectedReq.ID, admin,
+	); err != nil {
+		t.Fatalf("could not reject the join request: %v", err)
+	}
+
+	got, err := store.ListPendingJoinRequests(ctx, pool)
+	if err != nil {
+		t.Fatalf("could not list the pending join requests: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("got %d join requests, want 2: %+v", len(got), got)
+	}
+	if got[0].ID != olderReq.ID || got[1].ID != newerReq.ID {
+		t.Errorf("order = [%s %s], want [%s %s]", got[0].ID, got[1].ID, olderReq.ID, newerReq.ID)
+	}
+	if got[0].RequesterName != "Rui Costa" || got[0].RequesterEmail != "rui@example.test" {
+		t.Errorf("requester = %q <%s>, want %q <%s>", got[0].RequesterName, got[0].RequesterEmail, "Rui Costa", "rui@example.test")
+	}
+	if got[0].RequesterID != older || got[0].Message != "older" || got[0].State != "pending" {
+		t.Errorf("join request fields not read back: %+v", got[0])
+	}
+}
+
+func TestListPendingJoinRequestsIsEmptyWithNoRequests(t *testing.T) {
+	pool, ctx := usersTest(t)
+
+	got, err := store.ListPendingJoinRequests(ctx, pool)
+	if err != nil {
+		t.Fatalf("could not list the pending join requests: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d join requests, want none", len(got))
+	}
+}

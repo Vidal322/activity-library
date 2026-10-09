@@ -45,3 +45,36 @@ func CreateJoinRequest(
 
 	return joinReq, nil
 }
+
+type PendingJoinRequest struct {
+	JoinRequest
+	RequesterName  string `db:"requester_name"`
+	RequesterEmail string `db:"requester_email"`
+}
+
+const listPendingJoinRequestsQuery = `
+	SELECT jr.id, jr.requester, jr.message, jr.state, jr.decided_by,
+	       jr.created_at, jr.decided_at,
+	       u.name AS requester_name, u.email AS requester_email
+	FROM join_requests jr
+	JOIN users u ON u.id = jr.requester
+	WHERE jr.state = 'pending'
+	ORDER BY jr.created_at, jr.id
+`
+
+func ListPendingJoinRequests(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+) ([]PendingJoinRequest, error) {
+	rows, err := pool.Query(ctx, listPendingJoinRequestsQuery)
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	reqs, err := pgx.CollectRows(rows, pgx.RowToStructByName[PendingJoinRequest])
+	if err != nil {
+		return nil, classify(err)
+	}
+
+	return reqs, nil
+}

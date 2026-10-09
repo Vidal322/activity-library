@@ -81,3 +81,40 @@ func (s *Server) handleCreateJoinRequest(w http.ResponseWriter, r *http.Request)
 		slog.Error("Could not write join request created response", "error", err)
 	}
 }
+
+type pendingJoinRequest struct {
+	joinRequestDetail
+	RequesterName  string `json:"requester_name"`
+	RequesterEmail string `json:"requester_email"`
+}
+
+type pendingJoinRequestsResponse struct {
+	JoinRequests []pendingJoinRequest `json:"join_requests"`
+}
+
+func newPendingJoinRequestsResponse(reqs []store.PendingJoinRequest) pendingJoinRequestsResponse {
+	out := make([]pendingJoinRequest, 0, len(reqs))
+
+	for _, jr := range reqs {
+		out = append(out, pendingJoinRequest{
+			joinRequestDetail: newJoinRequestDetail(jr.JoinRequest),
+			RequesterName:     jr.RequesterName,
+			RequesterEmail:    jr.RequesterEmail,
+		})
+	}
+
+	return pendingJoinRequestsResponse{JoinRequests: out}
+}
+
+func (s *Server) handleListPendingJoinRequests(w http.ResponseWriter, r *http.Request) {
+	joinReqs, err := store.ListPendingJoinRequests(r.Context(), s.pool)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	err = writeJSON(w, http.StatusOK, newPendingJoinRequestsResponse(joinReqs))
+	if err != nil {
+		slog.Error("Could not write pending join requests response", "error", err)
+	}
+}
