@@ -7,6 +7,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/Vidal322/activity-library/internal/store"
 )
 
 const apiPrefix = "/v1"
@@ -60,6 +62,7 @@ func (s *Server) routes() http.Handler {
 				r.Post("/invitations", s.handleCreateInvitation)
 				r.Post("/invitations/{id}/revoke", s.handleRevokeInvitation)
 				r.Get("/joinrequests", s.handleListPendingJoinRequests)
+				r.Post("/joinrequests/{id}/accept", s.handleDecideJoinRequest(store.AcceptJoinRequest))
 			})
 		})
 	})

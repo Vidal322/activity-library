@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Vidal322/activity-library/internal/store"
 )
@@ -116,5 +121,40 @@ func (s *Server) handleListPendingJoinRequests(w http.ResponseWriter, r *http.Re
 	err = writeJSON(w, http.StatusOK, newPendingJoinRequestsResponse(joinReqs))
 	if err != nil {
 		slog.Error("Could not write pending join requests response", "error", err)
+	}
+}
+
+type decideJoinRequestFunc func(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	joinRequestID string,
+	decidedBy string,
+) (store.JoinRequest, error)
+
+func (s *Server) handleDecideJoinRequest(decide decideJoinRequestFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		decidedBy, ok := userIDFromContext(r.Context())
+		if !ok {
+			s.writeInternalError(w, "no user on an authenticated route", "path", r.URL.Path)
+			return
+		}
+
+		joinRequestID := chi.URLParam(r, "id")
+		var parsed pgtype.UUID
+		if err := parsed.Scan(joinRequestID); err != nil {
+			s.writeBadRequest(w, "malformed join request id")
+			return
+		}
+
+		joinReq, err := decide(r.Context(), s.pool, joinRequestID, decidedBy)
+		if err != nil {
+			s.writeStoreError(w, err)
+			return
+		}
+
+		err = writeJSON(w, http.StatusOK, newJoinRequestDetail(joinReq))
+		if err != nil {
+			slog.Error("Could not write join request decided response", "error", err)
+		}
 	}
 }

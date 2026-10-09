@@ -78,3 +78,73 @@ func ListPendingJoinRequests(
 
 	return reqs, nil
 }
+
+const decideJoinRequestQuery = `
+	UPDATE join_requests
+	SET state = @state,
+	    decided_by = @decided_by,
+	    decided_at = now()
+	WHERE id = @id
+  AND state = 'pending'
+	RETURNING id, requester, message, state, decided_by, created_at, decided_at
+`
+
+func decideJoinRequest(
+	ctx context.Context,
+	q rowsQuerier,
+	joinRequestID string,
+	decidedBy string,
+	state string,
+) (JoinRequest, error) {
+	rows, err := q.Query(ctx, decideJoinRequestQuery, pgx.NamedArgs{
+		"id":         joinRequestID,
+		"decided_by": decidedBy,
+		"state":      state,
+	})
+	if err != nil {
+		return JoinRequest{}, classify(err)
+	}
+
+	joinReq, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[JoinRequest])
+	if err != nil {
+		return JoinRequest{}, classify(err)
+	}
+
+	return joinReq, nil
+}
+
+const promoteOutsiderQuery = `
+	UPDATE users
+	SET role = 'member'
+	WHERE id = @id
+	  AND role = 'outsider'
+`
+
+func AcceptJoinRequest(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	joinRequestID string,
+	decidedBy string,
+) (JoinRequest, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return JoinRequest{}, classify(err)
+	}
+	defer tx.Rollback(ctx)
+
+	joinReq, err := decideJoinRequest(ctx, tx, joinRequestID, decidedBy, "approved")
+	if err != nil {
+		return JoinRequest{}, err
+	}
+
+	_, err = tx.Exec(ctx, promoteOutsiderQuery, pgx.NamedArgs{"id": joinReq.RequesterID})
+	if err != nil {
+		return JoinRequest{}, classify(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return JoinRequest{}, classify(err)
+	}
+
+	return joinReq, nil
+}
