@@ -15,6 +15,7 @@ const (
 	msgInternalError      = "internal server error"
 	msgIncompleteDraft    = "this draft is not ready to publish"
 	msgNotAdmin           = "you need admin permissions"
+	msgNotMember          = "you must be a member of the organization"
 )
 
 var conflictMessages = map[string]string{
