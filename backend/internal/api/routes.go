@@ -38,39 +38,42 @@ func (s *Server) routes() http.Handler {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
-			// TODO: change from this middleware to one with only authentication
 			r.Post("/joinrequests", s.handleCreateJoinRequest)
-			r.Get("/games", s.handleGamesList)
-			r.Post("/games", s.handleCreateDraft)
-			r.Patch("/games/{id}", s.handleEditGame)
-			r.Get("/games/{id}", s.handleGetGame)
-			r.Put("/games/{id}/blocks", s.handleEditGameBlocks)
-			r.Put("/games/{id}/categories", s.handleEditGameCategories)
-			r.Put("/games/{id}/locations", s.handleEditGameLocations)
-			r.Put("/games/{id}/materials", s.handleEditGameMaterials)
-			r.Post("/games/{id}/variants", s.handleCreateVariant)
-			r.Post("/games/{id}/publish", s.handlePublishGame)
-			r.Post("/games/{id}/unpublish", s.handleUnpublishGame)
-			r.Get("/categories", s.handleCategoriesList)
-			r.Get("/locations", s.handleLocationsList)
-			r.Get("/materials", s.handleMaterialsList)
-			r.Get("/users/{id}", s.handleGetUser)
 
 			r.Group(func(r chi.Router) {
-				r.Use(s.requireAdmin)
+				r.Use(s.requireMembership)
+				r.Get("/games", s.handleGamesList)
+				r.Post("/games", s.handleCreateDraft)
+				r.Patch("/games/{id}", s.handleEditGame)
+				r.Get("/games/{id}", s.handleGetGame)
+				r.Put("/games/{id}/blocks", s.handleEditGameBlocks)
+				r.Put("/games/{id}/categories", s.handleEditGameCategories)
+				r.Put("/games/{id}/locations", s.handleEditGameLocations)
+				r.Put("/games/{id}/materials", s.handleEditGameMaterials)
+				r.Post("/games/{id}/variants", s.handleCreateVariant)
+				r.Post("/games/{id}/publish", s.handlePublishGame)
+				r.Post("/games/{id}/unpublish", s.handleUnpublishGame)
+				r.Get("/categories", s.handleCategoriesList)
+				r.Get("/locations", s.handleLocationsList)
+				r.Get("/materials", s.handleMaterialsList)
+				r.Get("/users/{id}", s.handleGetUser)
 
-				r.Post("/invitations", s.handleCreateInvitation)
-				r.Post("/invitations/{id}/revoke", s.handleRevokeInvitation)
-				//r.Get("/invitations", s.handleListInvitations)
-				r.Get("/joinrequests", s.handleListPendingJoinRequests)
-				r.Post(
-					"/joinrequests/{id}/accept",
-					s.handleDecideJoinRequest(store.AcceptJoinRequest),
-				)
-				r.Post(
-					"/joinrequests/{id}/reject",
-					s.handleDecideJoinRequest(store.RejectJoinRequest),
-				)
+				r.Group(func(r chi.Router) {
+					r.Use(s.requireAdmin)
+
+					r.Post("/invitations", s.handleCreateInvitation)
+					r.Post("/invitations/{id}/revoke", s.handleRevokeInvitation)
+					//r.Get("/invitations", s.handleListInvitations)
+					r.Get("/joinrequests", s.handleListPendingJoinRequests)
+					r.Post(
+						"/joinrequests/{id}/accept",
+						s.handleDecideJoinRequest(store.AcceptJoinRequest),
+					)
+					r.Post(
+						"/joinrequests/{id}/reject",
+						s.handleDecideJoinRequest(store.RejectJoinRequest),
+					)
+				})
 			})
 		})
 	})
