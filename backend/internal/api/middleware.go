@@ -58,6 +58,11 @@ func (s *Server) requireMembership(next http.Handler) http.Handler {
 			s.writeStoreError(w, err)
 			return
 		}
+		if !user.Active {
+			s.clearSessionCookie(w)
+			s.writeUnauthorized(w, msgNotAuthenticated)
+			return
+		}
 
 		if user.Role != "member" && user.Role != "admin" {
 			s.writeForbidden(w, msgNotMember)
